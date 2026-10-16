@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +21,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hatio.speakinspire.domain.IdeaState
 import com.hatio.speakinspire.domain.IdeaStateDeriver
 import com.hatio.speakinspire.ui.MainViewModel
+import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
+import com.hatio.speakinspire.ui.screens.DeepeningScreen
 import com.hatio.speakinspire.ui.navigation.MainBottomBar
 import com.hatio.speakinspire.ui.navigation.MainTab
 import com.hatio.speakinspire.ui.screens.NewNoteScreen
@@ -52,6 +55,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Route {
     data object Home : Route
     data object NewNote : Route
+    data class Deepening(val noteId: String) : Route
 }
 
 @Composable
@@ -66,23 +70,23 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
         vm.markShot(id) { onOk() }
     }
 
-    when (route) {
+    when (val r = route) {
         Route.Home -> Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
                 val current = tab ?: MainTab.RECORD
                 when (current) {
                     MainTab.RECORD -> RecordScreen(
                         ideas = state.record,
-                        onOpen = { /* 追问对话页下一阶段 */ },
+                        onOpen = { id -> route = Route.Deepening(id) },
                         onSettings = { /* 设置页下一阶段 */ },
                     )
                     MainTab.THINK -> ThinkScreen(
                         ideas = state.think,
-                        onOpen = { },
+                        onOpen = { id -> route = Route.Deepening(id) },
                     )
                     MainTab.TOPIC -> TopicScreen(
                         ideas = state.topic,
-                        onOpen = { },
+                        onOpen = { id -> route = Route.Deepening(id) },
                         onMarkShot = markShotHandler,
                         onPark = { vm.park(it) },
                         onUndoShot = { vm.undoShot(it) },
@@ -102,6 +106,20 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onCreate = { route = Route.NewNote },
                 recordBadge = state.recordBadge,
                 topicBadge = state.topicBadge,
+            )
+        }
+
+is Route.Deepening -> {
+            val dvm: DeepeningViewModel = hiltViewModel(key = "deepening_${r.noteId}")
+            val dstate by dvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) { dvm.load(r.noteId) }
+            DeepeningScreen(
+                state = dstate,
+                onBack = { route = Route.Home },
+                onSend = { text -> dvm.send(text) },
+                onSkip = { dvm.skipTyping() },
+                onFinishEarly = { dvm.finishEarly() },
+                onCompose = { dvm.compose() },
             )
         }
 
