@@ -25,6 +25,8 @@ import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
 import com.hatio.speakinspire.ui.screens.DeepeningScreen
 import com.hatio.speakinspire.ui.screens.SettingsScreen
 import com.hatio.speakinspire.ui.settings.SettingsViewModel
+import com.hatio.speakinspire.ui.screens.ComposeScreen
+import com.hatio.speakinspire.ui.compose.ComposeViewModel
 import com.hatio.speakinspire.ui.navigation.MainBottomBar
 import com.hatio.speakinspire.ui.navigation.MainTab
 import com.hatio.speakinspire.ui.screens.NewNoteScreen
@@ -59,6 +61,7 @@ private sealed interface Route {
     data object NewNote : Route
     data class Deepening(val noteId: String) : Route
     data object Settings : Route
+    data class Compose(val noteId: String) : Route
 }
 
 @Composable
@@ -128,6 +131,23 @@ Route.Settings -> {
             )
         }
 
+        is Route.Compose -> {
+            val cvm: ComposeViewModel = hiltViewModel(key = "compose_${r.noteId}")
+            val cstate by cvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) {
+                cvm.load(r.noteId)
+                if (!cstate.hasContent && !cstate.alreadyComposed) cvm.compose()
+            }
+            ComposeScreen(
+                state = cstate,
+                onBack = { route = Route.Home },
+                onRetry = { cvm.compose() },
+                onToggleSource = { cvm.toggleSourceMode() },
+                onSave = { cvm.save() },
+                onGoBackToDeepening = { route = Route.Deepening(r.noteId) },
+            )
+        }
+
         is Route.Deepening -> {
             val dvm: DeepeningViewModel = hiltViewModel(key = "deepening_${r.noteId}")
             val dstate by dvm.state.collectAsStateWithLifecycle()
@@ -138,7 +158,7 @@ Route.Settings -> {
                 onSend = { text -> dvm.send(text) },
                 onSkip = { dvm.skipTyping() },
                 onFinishEarly = { dvm.finishEarly() },
-                onCompose = { dvm.compose() },
+                onCompose = { route = Route.Compose(r.noteId) },
             )
         }
 
