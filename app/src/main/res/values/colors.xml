@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 对应设计文档的 MD3 主色：紫（记录/追问） -->
+    <color name="primary">#6750A4</color>
+    <color name="surface">#FDFBFF</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose 应用不需要 XML 主题，但 Manifest 必须引用一个。
+         这里用 NoActionBar，因为 Compose 自己管顶栏。 -->
+    <style name="Theme.SpeakInspire" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+    </style>
+</resources>

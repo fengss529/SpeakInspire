@@ -1,0 +1,33 @@
+# Windows 换行符处理
+# 仓库统一存 LF，检出时按平台自动转换
+* text=auto eol=lf
+
+# Windows 脚本保持 CRLF，否则在 cmd 里可能无法执行
+*.bat text eol=crlf
+*.cmd text eol=crlf
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# 二进制文件不参与换行转换
+*.apk binary
+*.aab binary
+*.jar binary
+*.png binary
+*.jpg binary
+*.keystore binary
+
+# Android/Gradle 相关
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Room 导出的 schema 要提交（迁移校验用）
+# app/schemas/  ← 故意不忽略

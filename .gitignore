@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Room 导出的 schema 要提交（迁移校验用）
+# app/schemas/  ← 故意不忽略
