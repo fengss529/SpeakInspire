@@ -42,9 +42,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.ui.settings.SettingsUiState
 import com.hatio.speakinspire.ui.settings.TestResult
@@ -231,6 +233,17 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(Spacing.xxl))
+
+            // 版权。放在设置页最底部——这是它该在的位置，
+            // 不需要占据首屏，也不需要单独的「关于」页
+            Text(
+                text = stringResource(R.string.app_copyright),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(Spacing.m))
         }
     }
 }

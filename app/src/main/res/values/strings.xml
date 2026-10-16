@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">口语灵感</string>
+
+    <!-- App 名。桌面图标下显示的就是这个名字 -->
+    <string name="app_name">随手记</string>
+
+    <!-- 设置页底部显示这一行 -->
+    <string name="app_copyright">© 2026 Kevin Ho</string>
+
 </resources>

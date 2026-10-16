@@ -1,22 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：内容需落在中间 72x72 安全区内 -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M38,38h32a4,4 0,0 1,4 4v16a4,4 0,0 1,-4 4h-16l-8,7v-7h-8a4,4 0,0 1,-4 -4v-16a4,4 0,0 1,4 -4z" />
-
-    <path
-        android:fillColor="#6750A4"
-        android:pathData="M46,49m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path
-        android:fillColor="#6750A4"
-        android:pathData="M54,49m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-    <path
-        android:fillColor="#6750A4"
-        android:pathData="M62,49m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0" />
-</vector>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

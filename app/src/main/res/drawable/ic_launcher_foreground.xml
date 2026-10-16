@@ -1,29 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 应用图标：对话气泡 + 思考符号。用矢量而非 PNG，省去多套密度图。 -->
+<!--
+  「随手记」自适应图标前景 —— 声波。
+
+  设计：五根竖条构成声波，中间最高向两侧递减。
+  表达「把话说出口」而不是「录音」——
+  刻意避开了麦克风的圆形轮廓，那是录音机的既有符号。
+
+  层次：正中一根实心最高（视觉重心），中间两根 0.82，
+  最外两根 0.55。这个层次在 48px 小尺寸下仍能分辨，
+  缩小不会糊成一坨。
+
+  所有内容落在中间安全区内（y 28~92，x 26~82），
+  不会被各家厂商的图标遮罩裁到。
+  背景由 ic_launcher.xml 单独提供（渐变），
+  前景必须透明——所以这里不能画底色。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 背景 -->
-    <path
-        android:fillColor="#6750A4"
-        android:pathData="M0,0h108v108h-108z" />
-
-    <!-- 对话气泡 -->
+    <!-- 最外侧两根：矮，最淡 -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M30,32h48a6,6 0,0 1,6 6v24a6,6 0,0 1,-6 6h-24l-12,10v-10h-12a6,6 0,0 1,-6 -6v-24a6,6 0,0 1,6 -6z" />
+        android:fillAlpha="0.55"
+        android:pathData="M33,50m-3.4,0a3.4,3.4 0,1 1,6.8 0l0,20a3.4,3.4 0,1 1,-6.8 0z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M75,50m-3.4,0a3.4,3.4 0,1 1,6.8 0l0,20a3.4,3.4 0,1 1,-6.8 0z" />
 
-    <!-- 气泡内的三点，代表追问 -->
+    <!-- 中间两根：中高，次淡 -->
     <path
-        android:fillColor="#6750A4"
-        android:pathData="M42,50m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.82"
+        android:pathData="M42,41m-4.2,0a4.2,4.2 0,1 1,8.4 0l0,38a4.2,4.2 0,1 1,-8.4 0z" />
     <path
-        android:fillColor="#6750A4"
-        android:pathData="M54,50m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.82"
+        android:pathData="M66,41m-4.2,0a4.2,4.2 0,1 1,8.4 0l0,38a4.2,4.2 0,1 1,-8.4 0z" />
+
+    <!-- 正中一根：最高最粗，实心。视觉重心 -->
     <path
-        android:fillColor="#6750A4"
-        android:pathData="M66,50m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28m-5.6,0a5.6,5.6 0,1 1,11.2 0l0,64a5.6,5.6 0,1 1,-11.2 0z" />
+
 </vector>
