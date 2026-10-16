@@ -115,28 +115,59 @@ internal object SimpleJson {
     // ---------- 解析 ----------
 
     /** 按顶层逗号切分对象数组（跳过嵌套的 [] 与引号内的逗号） */
-    private fun splitObjects(body: String): List<String> {
-        val result = mutableListOf<String>()
-        var depth = 0
-        var inStr = false
-        var esc = false
-        val start = StringBuilder()
-        for (ch in body) {
-            if (esc) {
-                start.append(ch); esc = false; continue
+    /**
+ * 按**对象之间**的逗号切分，跳过嵌套与引号内的逗号。
+ *
+ * ## 曾经写错的地方
+ *
+ * 原实现只在 `depth == 0` 时切分，但输入是 `{"a":1},{"b":2}` 这样
+ * **已经去掉外层方括号**的内容——首个 `{` 让 depth 升到 1，
+ * 中间的逗号永远不被识别，整串只切出 1 个元素。
+ * 于是「两段 JSON 只解析出一段」，段落来源标记、多个拍摄角度全会丢。
+ *
+ * 现在两件事一起做：
+ * 1. 先剥掉可能存在的外层方括号，让两种输入走同一条路径
+ * 2. 判定条件用 `depth <= 0`，覆盖「带括号」与「不带括号」两种深度基准
+ */
+private fun splitObjects(raw: String): List<String> {
+    var body = raw.trim()
+    if (body.startsWith("[") && body.endsWith("]")) body = body.substring(1, body.length - 1)
+    if (body.isBlank()) return emptyList()
+
+    val result = mutableListOf<String>()
+    var depth = 0
+    var inStr = false
+    var esc = false
+    val sb = StringBuilder()
+
+    for (ch in body) {
+        if (esc) { sb.append(ch); esc = false; continue }
+        if (ch == '\\' && inStr) { sb.append(ch); esc = true; continue }
+        if (ch == '"') { inStr = !inStr; sb.append(ch); continue }
+        if (!inStr) {
+            when (ch) {
+                '[', '{' -> depth++
+                ']', '}' -> {
+                    depth--
+                    if (depth <= 0 && sb.isNotBlank()) {
+                        result += sb.toString()
+                        sb.clear()
+                        depth = 0
+                        continue
+                    }
+                }
+                ',' -> if (depth <= 0) {
+                    result += sb.toString()
+                    sb.clear()
+                    continue
+                }
             }
-            if (ch == '\\' && inStr) { start.append(ch); esc = true; continue }
-            if (ch == '"') { inStr = !inStr; start.append(ch); continue }
-            if (!inStr && (ch == '[' || ch == '{')) depth++
-            if (!inStr && (ch == ']' || ch == '}')) depth--
-            if (!inStr && ch == ',' && depth == 0) {
-                result += start.toString(); start.clear(); continue
-            }
-            start.append(ch)
         }
-        if (start.isNotBlank()) result += start.toString()
-        return result.filter { it.isNotBlank() }
+        sb.append(ch)
     }
+    if (sb.isNotBlank()) result += sb.toString()
+    return result.filter { it.isNotBlank() }
+}
 
     private fun extractString(obj: String, key: String): String? {
         val marker = "\"$key\":"

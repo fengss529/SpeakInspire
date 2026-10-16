@@ -153,6 +153,11 @@ data class DeepeningContext(
     /** 已经答完的轮数 */
     val answeredRounds: Int get() = rounds.count { it.isUser }
 
+    /** 用户实际说过的字数（去空白）。成文阶段判断素材是否足够 */
+    val materialSize: Int
+        get() = rounds.filter { it.isUser }
+            .sumOf { it.content.count { c -> !c.isWhitespace() } }
+
     /** 是否为最后一轮 */
     val isLastRound: Boolean get() = roundIndex >= maxRounds - 1
 }
