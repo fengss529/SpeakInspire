@@ -23,6 +23,8 @@ import com.hatio.speakinspire.domain.IdeaStateDeriver
 import com.hatio.speakinspire.ui.MainViewModel
 import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
 import com.hatio.speakinspire.ui.screens.DeepeningScreen
+import com.hatio.speakinspire.ui.screens.SettingsScreen
+import com.hatio.speakinspire.ui.settings.SettingsViewModel
 import com.hatio.speakinspire.ui.navigation.MainBottomBar
 import com.hatio.speakinspire.ui.navigation.MainTab
 import com.hatio.speakinspire.ui.screens.NewNoteScreen
@@ -56,6 +58,7 @@ private sealed interface Route {
     data object Home : Route
     data object NewNote : Route
     data class Deepening(val noteId: String) : Route
+    data object Settings : Route
 }
 
 @Composable
@@ -78,7 +81,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     MainTab.RECORD -> RecordScreen(
                         ideas = state.record,
                         onOpen = { id -> route = Route.Deepening(id) },
-                        onSettings = { /* 设置页下一阶段 */ },
+                        onSettings = { route = Route.Settings },
                     )
                     MainTab.THINK -> ThinkScreen(
                         ideas = state.think,
@@ -109,7 +112,23 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             )
         }
 
-is Route.Deepening -> {
+Route.Settings -> {
+            val svm: SettingsViewModel = hiltViewModel()
+            val sstate by svm.state.collectAsStateWithLifecycle()
+            SettingsScreen(
+                state = sstate,
+                onBack = { route = Route.Home },
+                onSelectProvider = { svm.selectProvider(it) },
+                onBaseUrl = { svm.updateBaseUrl(it) },
+                onModel = { svm.updateModel(it) },
+                onApiKey = { svm.updateKey(it) },
+                onThinking = { svm.updateThinking(it) },
+                onTest = { svm.testConnection() },
+                onSave = { svm.save() },
+            )
+        }
+
+        is Route.Deepening -> {
             val dvm: DeepeningViewModel = hiltViewModel(key = "deepening_${r.noteId}")
             val dstate by dvm.state.collectAsStateWithLifecycle()
             LaunchedEffect(r.noteId) { dvm.load(r.noteId) }
