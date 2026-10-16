@@ -25,7 +25,7 @@ import org.junit.Test
 class FakeAiServiceTest {
 
     private fun ctx(rounds: Int = 0, roundIndex: Int = 0) = DeepeningContext(
-        noteId = 1L,
+        noteId = "n1",
         originalNote = "我一想到要发言就紧张",
         // 偶数位是 AI 的问题，奇数位是用户的回答
         rounds = List(rounds) { i ->
@@ -199,7 +199,7 @@ class FakeAiServiceTest {
         fake.streamQuestion(ctx()).toList()
         fake.composeArticle(ctx(rounds = 4))
         fake.deriveAngles(
-            ArticleDraft(1L, "t", "原", listOf(ChatMessage.user("答")))
+            ArticleDraft("n1", "t", "原", listOf(ChatMessage.user("答")))
         )
         val stages = fake.captured.map { it.stage }
         assertTrue(stages.contains(FakeAiService.Stage.PROBE))

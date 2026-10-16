@@ -272,7 +272,7 @@ class ComposeResultTest {
     @Test
     fun `素材字数只统计用户回答`() {
         val draft = ArticleDraft(
-            noteId = 1L,
+            noteId = "n1",
             title = "t",
             originalNote = "原始随手记内容",
             dialogue = listOf(

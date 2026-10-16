@@ -186,7 +186,7 @@ class PromptBoundaryTest {
     @Test
     fun `追问上下文正确计算已答轮数`() {
         val ctx = DeepeningContext(
-            noteId = 1L,
+            noteId = "n1",
             originalNote = "我在会上说不出话",
             rounds = listOf(
                 ChatMessage.ai("当时具体发生了什么？"),
@@ -202,7 +202,7 @@ class PromptBoundaryTest {
     @Test
     fun `最后一轮标记正确`() {
         val ctx = DeepeningContext(
-            noteId = 1L,
+            noteId = "n1",
             originalNote = "x",
             rounds = emptyList(),
             roundIndex = 4,

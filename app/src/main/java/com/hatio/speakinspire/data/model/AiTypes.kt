@@ -13,7 +13,7 @@ data class ChatMessage(
 
 /** 成文阶段的输入。 */
 data class ArticleDraft(
-    val noteId: Long,
+    val noteId: String,
     val title: String,
     val originalNote: String,
     val dialogue: List<ChatMessage>,

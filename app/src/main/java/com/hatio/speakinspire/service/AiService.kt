@@ -138,7 +138,7 @@ enum class ErrorKind {
 
 /** 追问上下文。传给 AI 时会完整携带，保证多轮对话的连续性。 */
 data class DeepeningContext(
-    val noteId: Long,
+    val noteId: String,
     /** 用户最初随手记的内容 */
     val originalNote: String,
     /** 已完成的轮次，按时间顺序 */
