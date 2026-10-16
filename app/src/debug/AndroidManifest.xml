@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          debug 专用的 key 注入入口。
+          用法：adb shell am start -n com.hatio.speakinspire/.debug.KeySetupActivity -e key sk-xxx
+          release 包里没有这个 Activity，正式功能一律走设置页。
+        -->
+        <activity
+            android:name=".debug.KeySetupActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <receiver
+            android:name=".debug.KeyInjectReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.hatio.speakinspire.SET_KEY" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

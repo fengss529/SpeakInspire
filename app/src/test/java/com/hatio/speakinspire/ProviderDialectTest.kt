@@ -47,33 +47,53 @@ class ProviderDialectTest {
     // ---------- thinking 控制的两种心智模型 ----------
 
     @Test
-    fun `MiMo 需要显式关闭思考而 DeepSeek 不需要`() {
+    fun `两家都需要显式关闭思考`() {
+        // 实测 2026-10-16：deepseek-flash 与 mimo-v2.6-pro
+        // 不关掉都会返回 reasoning_content，而 content 为空。
+        // 追问是逐字浮现的，那会变成漫长的空白等待。
+        //
+        // 之前记的「DeepSeek 靠换模型名控制」是错的——它同样接受这个参数。
         assertTrue("MiMo 需要 thinking 参数", ProviderDialect.needsThinkingParam(Providers.MIMO))
-        assertFalse(
-            "DeepSeek 靠换模型名控制，不需要 thinking 参数",
+        assertTrue(
+            "DeepSeek 实测也必须显式关闭",
             ProviderDialect.needsThinkingParam(Providers.DEEPSEEK),
+        )
+        assertTrue(
+            "自定义服务商按配置来",
+            ProviderDialect.needsThinkingParam(Providers.CUSTOM),
         )
     }
 
     @Test
-    fun `两家预设的 thinkingDisabled 预设值不同`() {
+    fun `两家预设都是默认关闭思考`() {
         assertTrue("MiMo 默认开启，必须预设为关闭", Providers.MIMO.thinkingDisabled)
-        assertFalse(
-            "DeepSeek 非思考模型本身无需该参数",
+        assertTrue(
+            "deepseek-flash 默认也返回 reasoning_content，同样要预设为关闭",
             Providers.DEEPSEEK.thinkingDisabled,
         )
     }
 
     @Test
     fun `thinkingBody 在关闭时输出正确的 JSON 片段`() {
-        val body = ProviderDialect.thinkingBody(Providers.MIMO)
+        val body = ProviderDialect.thinkingBody(Providers.DEEPSEEK)
         assertTrue(body.contains("\"thinking\":{\"type\":\"disabled\"}"))
         assertTrue(body.endsWith(","))
     }
 
     @Test
-    fun `thinkingBody 在不需关闭时为空`() {
-        assertEquals("", ProviderDialect.thinkingBody(Providers.DEEPSEEK))
+    fun `thinkingBody 不含 reasoning_content`() {
+        //那是响应字段，当请求参数发会报错
+        assertFalse(
+            ProviderDialect.thinkingBody(Providers.DEEPSEEK).contains("reasoning_content")
+        )
+    }
+
+    @Test
+    fun `未关闭思考时 thinkingBody 为空`() {
+        assertEquals(
+            "",
+            ProviderDialect.thinkingBody(Providers.DEEPSEEK.copy(thinkingDisabled = false)),
+        )
     }
 
     // ---------- SSE 解析：必须容错 keep-alive 注释帧 ----------

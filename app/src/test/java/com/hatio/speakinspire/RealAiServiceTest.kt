@@ -81,13 +81,34 @@ class RequestBuilderTest {
     }
 
     @Test
-    fun `DeepSeek 不发送 thinking 参数`() {
+    fun `DeepSeek 也发送 thinking disabled`() {
+        // 实测发现：deepseek-flash 默认返回 reasoning_content，content 是空的。
+        // 不关掉的话追问会一直空白等待——逐字浮现变成了空白等待。
+        val body = RequestBuilder.probe(
+            Providers.DEEPSEEK.copy(thinkingDisabled = true), "系统提示", emptyList()
+        )
+        assertTrue(
+            "DeepSeek 必须显式关闭思考",
+            body.contains("\"thinking\":{\"type\":\"disabled\"}"),
+        )
+    }
+
+    @Test
+    fun `未关闭思考时不发该参数`() {
+        val body = RequestBuilder.probe(
+            Providers.DEEPSEEK.copy(thinkingDisabled = false), "系统提示", emptyList()
+        )
+        assertFalse(body.contains("thinking"))
+    }
+
+    @Test
+    fun `不发 reasoning_content 因为那是输出字段`() {
         val body = RequestBuilder.probe(
             Providers.DEEPSEEK, "系统提示", emptyList()
         )
         assertFalse(
-            "DeepSeek 靠换模型名控制，多发参数反而可能出问题",
-            body.contains("thinking"),
+            "reasoning_content 是响应字段，当请求参数发会出错",
+            body.contains("reasoning_content"),
         )
     }
 

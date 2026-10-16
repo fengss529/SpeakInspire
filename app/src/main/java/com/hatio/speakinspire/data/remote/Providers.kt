@@ -30,7 +30,9 @@ object Providers {
         apiKey = "",
         // 不要用 deepseek-v4-flash：那是遗留名，官方现为 deepseek-flash（V4.1-Flash）
         model = "deepseek-flash",
-        thinkingDisabled = false,
+        // 实测 deepseek-flash 默认返回 reasoning_content 而 content 为空，
+        // 追问的逐字浮现会变成空白等待——所以默认就关掉
+        thinkingDisabled = true,
     )
 
     val MIMO = ProviderConfig(
@@ -71,11 +73,24 @@ object Providers {
 object ProviderDialect {
 
     /** DeepSeek 的非思考模型走v4-pro / flash 系列，不需要 thinking 参数 */
+    /**
+     * DeepSeek 与 MiMo 都支持 `thinking: {"type":"disabled"}`。
+     *
+     * 实测（2026-10-16，deepseek-flash）：
+     * - 不发thinking → 返回 reasoning_content，content 为空，首字延迟高
+     * - 发 disabled → reasoning_content 为 null，content 直接有值
+     *
+     * 之前记的「DeepSeek 靠换模型名控制」是**错的**——
+     * 它同样接受这个参数，且必须显式关闭，
+     * 否则追问的逐字浮现会变成漫长的空白等待。
+     */
     fun needsThinkingParam(cfg: ProviderConfig): Boolean =
-        cfg.providerId == ProviderConfig.MIMO || cfg.providerId == ProviderConfig.CUSTOM
+        cfg.providerId == ProviderConfig.DEEPSEEK ||
+            cfg.providerId == ProviderConfig.MIMO ||
+            cfg.providerId == ProviderConfig.CUSTOM
 
     fun thinkingBody(cfg: ProviderConfig): String =
-        if (cfg.thinkingDisabled) """"reasoning_content":null,"thinking":{"type":"disabled"},"""
+        if (cfg.thinkingDisabled) "\"thinking\":{\"type\":\"disabled\"},"
         else ""
 
     /**
