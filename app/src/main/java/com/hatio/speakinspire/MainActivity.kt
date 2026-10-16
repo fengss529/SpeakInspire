@@ -27,6 +27,8 @@ import com.hatio.speakinspire.ui.screens.SettingsScreen
 import com.hatio.speakinspire.ui.settings.SettingsViewModel
 import com.hatio.speakinspire.ui.screens.ComposeScreen
 import com.hatio.speakinspire.ui.compose.ComposeViewModel
+import com.hatio.speakinspire.ui.screens.ConvertTopicScreen
+import com.hatio.speakinspire.ui.topic.TopicViewModel
 import com.hatio.speakinspire.ui.navigation.MainBottomBar
 import com.hatio.speakinspire.ui.navigation.MainTab
 import com.hatio.speakinspire.ui.screens.NewNoteScreen
@@ -62,6 +64,7 @@ private sealed interface Route {
     data class Deepening(val noteId: String) : Route
     data object Settings : Route
     data class Compose(val noteId: String) : Route
+    data class Convert(val noteId: String) : Route
 }
 
 @Composable
@@ -88,7 +91,8 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     )
                     MainTab.THINK -> ThinkScreen(
                         ideas = state.think,
-                        onOpen = { id -> route = Route.Deepening(id) },
+                        // 思考库里的条目已经有文章了，直接进成文/来源视图
+                        onOpen = { id -> route = Route.Compose(id) },
                     )
                     MainTab.TOPIC -> TopicScreen(
                         ideas = state.topic,
@@ -131,6 +135,23 @@ Route.Settings -> {
             )
         }
 
+        is Route.Convert -> {
+            val tvm: TopicViewModel = hiltViewModel(key = "topic_${r.noteId}")
+            val tstate by tvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) { tvm.load(r.noteId) }
+            ConvertTopicScreen(
+                state = tstate,
+                onBack = { route = Route.Home },
+                onDerive = { tvm.deriveAngles(tstate.articleTitle, emptyList()) },
+                onChooseAngle = { tvm.chooseAngle(it) },
+                onBackToAngles = { tvm.back() },
+                onSave = { tvm.saveScript() },
+                onMarkShot = { tvm.markShot() },
+                onUndoShot = { tvm.undoShot() },
+                onPark = { tvm.park() },
+            )
+        }
+
         is Route.Compose -> {
             val cvm: ComposeViewModel = hiltViewModel(key = "compose_${r.noteId}")
             val cstate by cvm.state.collectAsStateWithLifecycle()
@@ -143,7 +164,10 @@ Route.Settings -> {
                 onBack = { route = Route.Home },
                 onRetry = { cvm.compose() },
                 onToggleSource = { cvm.toggleSourceMode() },
-                onSave = { cvm.save() },
+                onSave = {
+                    cvm.save()
+                    route = Route.Convert(r.noteId)
+                },
                 onGoBackToDeepening = { route = Route.Deepening(r.noteId) },
             )
         }

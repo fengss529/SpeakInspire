@@ -1,0 +1,213 @@
+package com.hatio.speakinspire.ui.topic
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.data.model.Angle
+import com.hatio.speakinspire.data.model.ArticleDraft
+import com.hatio.speakinspire.data.model.ChatMessage
+import com.hatio.speakinspire.data.model.Cue
+import com.hatio.speakinspire.data.model.Script
+import com.hatio.speakinspire.data.model.ScriptOutline
+import com.hatio.speakinspire.data.model.Section
+import com.hatio.speakinspire.data.remote.ErrorMapper
+import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.service.AiService
+import com.hatio.speakinspire.service.ErrorKind
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.UUID
+import javax.inject.Inject
+
+/**
+ * 转选题页 ViewModel。
+ *
+ * ## 三步：拆角度 → 选一个 → 生成骨架
+ *
+ * 拆角度和生成骨架**是两次独立的调用**，不能合并：
+ * 用户需要先看到「有哪几个角度可选」，才有办法判断。
+ * 一次调用直接出骨架，等于剥夺了这个判断。
+ *
+ * ## 骨架是意群短语，不是逐字稿
+ *
+ * 用户组句困难是产品的核心假设。给逐字稿会让用户变成朗读机器，
+ * 而朗读出来的短视频没有「他在讲自己的事」的感觉。
+ *
+ * 所以短语必须是完整意群：「我明明准备过」而不是「稿子」。
+ */
+@HiltViewModel
+class TopicViewModel @Inject constructor(
+    private val repo: IdeaRepository,
+    private val ai: AiService,
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(TopicUiState())
+    val state: StateFlow<TopicUiState> = _state.asStateFlow()
+
+    fun load(noteId: String) {
+        viewModelScope.launch {
+            val idea = repo.findIdea(noteId) ?: return@launch
+            val existing = idea.scripts.firstOrNull { !it.parked }
+            _state.value = TopicUiState(
+                noteId = noteId,
+                articleTitle = idea.article?.title ?: idea.note.title,
+                existingScript = existing,
+                shotAt = existing?.shotAt,
+            )
+            // 还没有选题就去拆角度
+            if (existing == null && idea.article != null) {
+                deriveAngles(idea.article.title, idea.article!!.paragraphs.map { it.text })
+            }
+        }
+    }
+
+    /** 第一步：拆角度。只要 3 个——选择时信息量刚好 */
+    fun deriveAngles(title: String, paragraphs: List<String>) {
+        _state.value = _state.value.copy(loadingAngles = true, errorMessage = null)
+        viewModelScope.launch {
+            val angles = try {
+                ai.deriveAngles(ArticleDraft("n", title, title, paragraphs.map { ChatMessage.user(it) }))
+            } catch (e: Exception) {
+                emptyList()
+            }
+            _state.value = _state.value.copy(
+                loadingAngles = false,
+                angles = angles.take(3),
+                errorMessage = if (angles.isEmpty()) {
+                    ErrorMapper.humanize(ErrorKind.UNKNOWN)
+                } else null,
+            )
+        }
+    }
+
+    /** 选中一个角度→ 生成骨架 */
+    fun chooseAngle(angle: Angle) {
+        val current = _state.value
+        _state.value = current.copy(
+            chosenAngle = angle,
+            loadingOutline = true,
+            errorMessage = null,
+            step = TopicStep.OUTLINE,
+        )
+        viewModelScope.launch {
+            val outline = try {
+                ai.buildOutline(
+                    ArticleDraft("n", current.articleTitle, current.articleTitle, emptyList()),
+                    angle,
+                )
+            } catch (e: Exception) {
+                ScriptOutline(angle.title, emptyList())
+            }
+            _state.value = _state.value.copy(
+                loadingOutline = false,
+                outline = outline,
+            )
+        }
+    }
+
+    /** 保存选题。可重复调用——同一篇文章可派生多个角度 */
+    fun saveScript() {
+        val current = _state.value
+        val angle = current.chosenAngle ?: return
+        val outline = current.outline ?: return
+        if (outline.sections.isEmpty()) return
+
+        viewModelScope.launch {
+            val script = Script(
+                id = UUID.randomUUID().toString(),
+                articleId = "a_${current.noteId}",
+                angle = angle.title,
+                sections = outline.sections.map { s ->
+                    Section(
+                        title = s.title,
+                        seconds = s.seconds,
+                        phrases = s.phrases,
+                        cues = s.cues.map { Cue(it.icon, it.text) },
+                    )
+                },
+                createdAt = System.currentTimeMillis(),
+            )
+            repo.saveScript(script)
+            _state.value = _state.value.copy(saved = true)
+        }
+    }
+
+    /**
+     * 右滑 = 已拍摄。
+     *
+     * **这是个标记，不是动作。** 用户用手机里的其他 app 拍完之后回来点一下，
+     * App 只负责记「这条已经拍过了」。
+     *
+     * 所以不能有「拍摄中」的中间态——那会让人以为 App 要负责拍。
+     */
+    fun markShot() {
+        val scriptId = _state.value.existingScript?.id ?: return
+        viewModelScope.launch {
+            repo.markShot(scriptId)
+            _state.value = _state.value.copy(shotAt = System.currentTimeMillis())
+        }
+    }
+
+    fun undoShot() {
+        val scriptId = _state.value.existingScript?.id ?: return
+        viewModelScope.launch {
+            repo.undoShot(scriptId)
+            _state.value = _state.value.copy(shotAt = null)
+        }
+    }
+
+    /** 左滑 = 这个角度先不拍，移回思考库。搁置不是删除 */
+    fun park() {
+        val scriptId = _state.value.existingScript?.id ?: return
+        viewModelScope.launch {
+            repo.parkScript(scriptId)
+            _state.value = _state.value.copy(parked = true)
+        }
+    }
+
+    fun back() {
+        _state.value = _state.value.copy(
+            chosenAngle = null,
+            outline = null,
+            step = TopicStep.ANGLES,
+        )
+    }
+}
+
+enum class TopicStep { ANGLES, OUTLINE }
+
+data class TopicUiState(
+    val noteId: String = "",
+    val articleTitle: String = "",
+    val step: TopicStep = TopicStep.ANGLES,
+    val angles: List<Angle> = emptyList(),
+    val loadingAngles: Boolean = false,
+    val chosenAngle: Angle? = null,
+    val outline: ScriptOutline? = null,
+    val loadingOutline: Boolean = false,
+    /** 已存在的选题。从思考库进来时直接展示 */
+    val existingScript: Script? = null,
+    val shotAt: Long? = null,
+    val parked: Boolean = false,
+    val saved: Boolean = false,
+    val errorMessage: String? = null,
+) {
+    val hasExisting: Boolean get() = existingScript != null
+
+    /** 展示用：优先看已保存的，没有才看刚生成的 */
+    val displaySections: List<Section>
+        get() = existingScript?.sections
+            ?: outline?.sections?.map { s ->
+                Section(s.title, s.seconds, s.phrases, s.cues.map { Cue(it.icon, it.text) })
+            }
+            ?: emptyList()
+
+    val displayAngle: String?
+        get() = existingScript?.angle ?: chosenAngle?.title ?: outline?.angle
+
+    val totalSeconds: Int get() = displaySections.sumOf { it.seconds }
+
+    val isShot: Boolean get() = shotAt != null
+}
