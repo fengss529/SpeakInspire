@@ -102,6 +102,13 @@ fun EntityBundle.toIdeaView(note: Note): com.hatio.speakinspire.domain.IdeaView 
     )
 
 /**
+ * 以 note 为主语组装——更符合调用直觉：
+ * 「这条 note 对应的 idea view 是什么」。
+ */
+fun Note.toIdeaView(bundle: EntityBundle): com.hatio.speakinspire.domain.IdeaView =
+    bundle.toIdeaView(this)
+
+/**
  * 三张表查出来的一次性聚合。
  *
  * UI 只读这个聚合，不分别查三个表——避免多次查询之间状态不一致

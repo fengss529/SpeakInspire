@@ -69,6 +69,10 @@ interface DeepeningDao {
     @Query("SELECT * FROM deepening WHERE noteId = :noteId ORDER BY startedAt DESC")
     suspend fun findLatestByNote(noteId: String): DeepeningEntity?
 
+    /** Flow 版供 observeIdeas 聚合用——任何表变化都要触发状态重算 */
+    @Query("SELECT * FROM deepening ORDER BY startedAt DESC")
+    fun observeAll(): Flow<List<DeepeningEntity>>
+
     @Query("SELECT * FROM deepening ORDER BY startedAt DESC")
     suspend fun findAll(): List<DeepeningEntity>
 
@@ -103,6 +107,9 @@ interface ScriptDao {
 
     @Query("SELECT * FROM script WHERE articleId = :articleId ORDER BY createdAt DESC")
     suspend fun findByArticle(articleId: String): List<ScriptEntity>
+
+    @Query("SELECT * FROM script ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<ScriptEntity>>
 
     @Query("SELECT * FROM script ORDER BY createdAt DESC")
     suspend fun findAll(): List<ScriptEntity>
