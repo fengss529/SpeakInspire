@@ -193,13 +193,16 @@ private fun FunnelRow(label: String, value: Int, total: Int, color: Color) {
                 .clip(RoundedCornerShape(4.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(pct.coerceAtLeast(2) / 100f)
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(color),
-            )
+            // 0% 时不画条——画一小截会让人误以为「有一点点」
+            if (pct > 0) {
+                Box(
+                    Modifier
+                        .fillMaxWidth((pct.coerceIn(2, 100)) / 100f)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(color),
+                )
+            }
         }
     }
 }
