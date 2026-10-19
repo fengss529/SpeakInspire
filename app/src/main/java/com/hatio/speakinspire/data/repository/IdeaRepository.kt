@@ -101,11 +101,18 @@ class IdeaRepository(
      *
      * createdAt **不动** —— 改了会让这条记录在时间线上跳到最前面，
      * 而用户只是想改个字，不是在新建一条。
+     *
+     * 返回是否真的更新了。
+     *
+     * 之前这里是静默 `?: return` —— id 传错（比如空字符串）时
+     * 不报错也不生效，表现为「点了保存但内容没变」，
+     * 排查起来毫无线索。现在返回 false，调用方可以报错。
      */
-    suspend fun updateNote(id: String, title: String, body: String) =
+    suspend fun updateNote(id: String, title: String, body: String): Boolean =
         withContext(Dispatchers.IO) {
-            val existing = noteDao.findById(id) ?: return@withContext
+            val existing = noteDao.findById(id) ?: return@withContext false
             noteDao.upsert(existing.copy(title = title, body = body))
+            true
         }
 
     suspend fun createNote(

@@ -195,9 +195,19 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
         }
 
         is Route.Edit -> {
-            val evm: EditNoteViewModel = hiltViewModel(key = "edit_${r.noteId}")
+            // 用 route 里的一次性 id 做 key，
+            // 而不是固定的 "edit_$noteId"——
+            // 固定 key 会让 hiltViewModel 复用同一个实例，
+            // 保存后返回详情页、再进编辑页时拿到的还是旧状态，
+            // load() 又因noteId 相同直接 return，于是显示旧内容。
+            //
+            // 每次进入编辑都是新的编辑会话，用递增的 sessionId 隔离。
+            val sessionId = remember(r.noteId) { System.nanoTime() }
+            val evm: EditNoteViewModel = hiltViewModel(key = "edit_$sessionId")
             val estate by evm.state.collectAsStateWithLifecycle()
-            LaunchedEffect(r.noteId) { evm.load(r.noteId) }
+
+            LaunchedEffect(sessionId) { evm.load(r.noteId) }
+
             NewNoteScreen(
                 initialTitle = estate.title,
                 initialBody = estate.body,
