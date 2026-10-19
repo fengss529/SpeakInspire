@@ -39,6 +39,11 @@ object DatabaseModule {
                 // 不用 fallbackToDestructiveMigration——
                 // 数据是用户的思考资产，静默清空不可接受。
                 // 加字段时必须写 Migration。
+                //
+                // v1→v2 重建了 provider 表（主键改复合键），
+                // 那张表只有配置没有 key，丢了可以重建。
+                // note / deepening / article 这些才是用户资产，绝不能动。
+                builder.addMigrations(*SpeakInspireDatabase.ALL_MIGRATIONS)
             }
             .build()
 
