@@ -116,7 +116,8 @@ class ComposeViewModel @Inject constructor(
                         _state.value = _state.value.copy(
                             loading = false,
                             errorMessage = ErrorMapper.humanize(
-                                result.kind.toErrorKind()
+                                result.kind.toErrorKind(),
+                                result.detail,
                             ),
                         )
                     }
@@ -124,12 +125,12 @@ class ComposeViewModel @Inject constructor(
             } catch (e: TransportException) {
                 _state.value = _state.value.copy(
                     loading = false,
-                    errorMessage = ErrorMapper.humanize(e.kind),
+                    errorMessage = ErrorMapper.humanize(e.kind, e.detail),
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     loading = false,
-                    errorMessage = ErrorMapper.humanize(ErrorKind.NETWORK_UNAVAILABLE),
+                    errorMessage = ErrorMapper.humanize(ErrorKind.NETWORK_UNAVAILABLE, e.message),
                 )
             }
         }

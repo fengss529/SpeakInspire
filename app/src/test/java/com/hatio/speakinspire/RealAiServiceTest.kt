@@ -95,15 +95,15 @@ class RequestBuilderTest {
     }
 
     /**
-     * 成文仍按配置走；追问不看了——追问必关思考（见 RequestBuilder.probe 注释）。
-     * 那一条由 `ProbeRequestJsonTest.追问无条件关掉思考` 守着。
+     * 追问与成文都强制关思考了（见 RequestBuilder 的注释），
+     * 拆角度仍按配置走——这条守着「开关没有被彻底架空」。
      */
     @Test
-    fun `成文未关闭思考时不发该参数`() {
-        val body = RequestBuilder.compose(
+    fun `拆角度未关闭思考时不发该参数`() {
+        val body = RequestBuilder.angles(
             Providers.DEEPSEEK.copy(thinkingDisabled = false),
             "系统提示",
-            listOf(ChatMessage.user("素材")),
+            "标题：测试",
         )
         assertFalse(body.contains("thinking"))
     }
@@ -674,5 +674,88 @@ class RealAiServiceTest {
         t.pingResponse = """{"error":{"message":"invalid token for this endpoint"}}"""
         val r = service(t).testConnection(cfg())
         assertTrue(r is ConnectionResult.Failure)
+    }
+
+    // ---------- 成文请求的形状 ----------
+
+    private val okJson =
+        """{"choices":[{"message":{"content":"{\"title\":\"标题\",\"paragraphs\":[{\"text\":\"一段\",\"isMine\":true}]}"}}]}"""
+
+    /**
+     * 追问常常停在「AI 刚问完、用户没答」的位置。
+     * 直接拍平的话 messages 以 assistant 结尾，
+     * 而 `response_format: json_object` 要求结尾是用户消息——
+     * 否则模型会顺着那句问题续写，而不是执行「写成文章」。
+     */
+    @Test
+    fun `成文请求的最后一条必须是用户消息`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse = okJson
+        // 刻意以 AI 的问题结尾，模拟「答完最后一个问题前就点了成文」
+        service(t).composeArticle(
+            ctx(
+                listOf(
+                    ChatMessage.ai("你最早意识到这件事，是哪一次？"),
+                    ChatMessage.user("去年冬天"),
+                    ChatMessage.ai("那次之后你改了什么？"),
+                )
+            )
+        )
+        val root = MiniJson.parse(t.lastBody) as Map<*, *>
+        val msgs = root["messages"] as List<*>
+        assertEquals("user", (msgs.last() as Map<*, *>)["role"])
+    }
+
+    @Test
+    fun `成文请求本就以用户结尾时不重复追加`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse = okJson
+        service(t).composeArticle(
+            ctx(listOf(ChatMessage.ai("问题？"), ChatMessage.user("我的回答")))
+        )
+        val root = MiniJson.parse(t.lastBody) as Map<*, *>
+        val msgs = root["messages"] as List<*>
+        assertEquals("user", (msgs.last() as Map<*, *>)["role"])
+        assertEquals("我的回答", (msgs.last() as Map<*, *>)["content"])
+    }
+
+    @Test
+    fun `成文失败时把服务商原文带出去`() = runBlocking {
+        val t = FakeTransport()
+        t.throwOnPost = TransportException(
+            kind = ErrorKind.BAD_REQUEST,
+            message = "拒了",
+            statusCode = 400,
+            detail = """{"error":{"message":"messages must end with user"}}""",
+        )
+        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        assertTrue(r is ComposeResult.Failed)
+        val f = r as ComposeResult.Failed
+        assertTrue("必须带出原文：${f.detail}", f.detail!!.contains("must end with user"))
+    }
+
+    @Test
+    fun `成文响应缺 content 时带出原始响应片段`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse = """{"error":{"message":"quota exceeded"}}"""
+        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        assertTrue(r is ComposeResult.Failed)
+        assertTrue(
+            "没有 content 时 raw 就是唯一线索：${(r as ComposeResult.Failed).detail}",
+            r.detail!!.contains("quota"),
+        )
+    }
+
+    @Test
+    fun `成文返回非 JSON 时带出模型原文`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse =
+            """{"choices":[{"message":{"content":"抱歉，我先说说我的理解……"}}]}"""
+        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        assertTrue(r is ComposeResult.Failed)
+        assertTrue(
+            "解析失败要说清模型返回了什么：${(r as ComposeResult.Failed).detail}",
+            r.detail!!.contains("抱歉"),
+        )
     }
 }

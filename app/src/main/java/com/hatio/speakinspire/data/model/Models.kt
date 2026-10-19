@@ -38,6 +38,20 @@ data class Round(
     val answer: String? = null
 ) {
     val answered: Boolean get() = !answer.isNullOrBlank()
+
+    /**
+     * 手写 toString —— 不让默认实现泄漏到界面上。
+     *
+     * 数据类的默认 toString 会把内部结构原样打印成
+     * `Round(question=你说的"好奇心"，具体指…, answer=…)`。
+     * 详情页曾经写 `"已追问 $rounds 轮"`（漏了 `.size`），
+     * 于是整串结构直接显示给用户看。
+     *
+     * 那个 bug 应该改插值本身；这里再做一层，是保证**万一**再有人
+     * 往文案里插一个 Round 或 Round 列表，屏幕上出现的是人话。
+     */
+    override fun toString(): String =
+        if (answered) "问：$question\n答：$answer" else "问：$question"
 }
 
 /**

@@ -42,7 +42,18 @@ sealed interface ComposeResult {
         val requiredChars: Int,
     ) : ComposeResult
 
-    data class Failed(val kind: ErrorKindLite) : ComposeResult
+    /**
+     * 失败。
+     *
+     * [detail] 不能省。这个类曾经只有 [kind] 一个字段，
+     * 于是成文失败能说出口的只有「出了点问题」——
+     * 服务商返回的原文、解析拿到的响应体，全在中间层被扔掉了。
+     * 追问那边早就带上了 detail，成文这边漏了整整一条链路。
+     */
+    data class Failed(
+        val kind: ErrorKindLite,
+        val detail: String? = null,
+    ) : ComposeResult
 }
 
 enum class ErrorKindLite { NETWORK, UNAUTHORIZED, RATE_LIMITED, UNKNOWN }

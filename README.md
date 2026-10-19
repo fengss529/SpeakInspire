@@ -3,11 +3,11 @@
 提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 成文章 → 转选题 → 拍摄**。
 
 ```bash
-gradlew.bat test                # 跑全部 338 条单元测试
+gradlew.bat test                # 跑全部 343 条单元测试
 gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 ```
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.2**（versionCode 10）。
+包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.3**（versionCode 11）。
 
 ---
 
@@ -19,7 +19,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | 服务层 | ✅ | `RealAiService` 已接真实模型（DeepSeek / MiMo，OpenAI 兼容） |
 | 领域层 | ✅ | 8 状态派生 + 手势判定，纯函数 |
 | UI | ✅ | 五格导航 + 记录详情 + 编辑 + 追问 + 成文 + 转选题 + 设置 |
-| 测试 | ✅ | **338 条，0 失败**（含追问→成文→选题的链路测试） |
+| 测试 | ✅ | **343 条，0 失败**（含追问→成文→选题的链路测试） |
 | 未开始 | ⬜ | 拍摄后反馈（P2 的核心风险点） |
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（来源视图）→ 转选题（骨架）→ 标记已拍摄。
@@ -51,7 +51,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 |---|---:|---|
 | `MappersTest` | 34 | Entity ↔ Model + JSON 编解码 |
 | `IdeaRepositoryTest` | 27 | 聚合、状态派生、写操作返回值 |
-| `RealAiServiceTest` | 24 | 真实响应解析、拒稿、错误归因、**第一问带原始记录** |
+| `RealAiServiceTest` | 29 | 真实响应解析、拒稿、错误归因、**成文请求形状** |
 | `DeepeningUiStateTest` | 18 | 进度点 / 折叠摘要 / 收尾卡 |
 | `TopicUiStateTest` | 18 | 角度选择、骨架展示 |
 | `ComposeUiStateTest` | 17 | 来源视图、拒稿路径 |
@@ -70,7 +70,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `ResponseParserTest` / `SseParserTest` | 12 | 响应与帧解析 |
 | `EditNoteTest` | 5 | 编辑写库 |
 | `AiServiceContractTest` / `ComposeResultTest` | 7 | 三方法必须分开 |
-| **合计** | **338** | **0 失败** |
+| **合计** | **343** | **0 失败** |
 
 ### 测试的盲区（踩过）
 
@@ -238,6 +238,54 @@ probe(...)  →  forceNoThinking = true
 `StreamAuditTest` 九条把三种情形分开钉住。
 
 **这一条的意义不在于修好某个 bug，而在于：下次再坏，界面会自己说是哪种坏。**
+
+---
+
+## V0.8.3：追问终于通了，然后露出三个藏着的问题
+
+真机上第一次完整聊下来（三问三答），立刻暴露了三处此前不可能看见的毛病——
+**它们都依赖「追问有数据」这个前提，而追问在此之前从未成功过。**
+
+### 1. 详情页把数据类打印到了界面上
+
+```kotlin
+text = "已追问 $rounds 轮"        // rounds 是 List<Round>
+```
+
+Kotlin 的字符串模板接受任何对象，于是整串
+`[Round(question=你说的"好奇心"…, answer=…)]` 直接显示给用户。
+正确写法是 `${rounds.size}`。
+
+除了改插值，还给 `Round` 手写了 `toString()`：
+万一以后又有人往文案里插一个 Round 或 Round 列表，
+屏幕上出现的是「问：… 答：…」，而不是内部结构。
+
+### 2. 成文请求的最后一条是 assistant
+
+追问常常停在「AI 刚问完、用户还没答」的位置。直接拍平 `rounds`，
+`messages` 就以 `assistant` 结尾——而 `response_format: json_object`
+要求结尾是用户消息，否则模型会顺着那句问题**续写**，
+而不是执行「写成文章」。结果要么被拒，要么吐一段非 JSON。
+
+现在 `composeMessages()` 保证末尾一定有一条用户消息。
+
+### 3. 成文失败丢掉了全部诊断信息
+
+`ComposeResult.Failed` 曾经只持有 `ErrorKindLite`（四个枚举值），
+服务商原文、解析拿到的响应体，**全在中间层被扔掉了**。
+追问那边 V0.8.2 已经带上了 detail，成文这边漏了整整一条链路。
+
+现在 `Failed` 带 `detail`：
+
+| 失败点 | detail 里是什么 |
+|---|---|
+| HTTP 非 200 | 服务商返回的原文 |
+| 响应没有 content | 原始响应前 300 字 |
+| 有 content 但不含 paragraphs | **模型实际输出的那一段话** |
+| paragraphs 解析为空 | 提取到的原始数组 |
+
+成文也改成强制关思考——思考模式下模型倾向在思维链里把话说完，
+正文只剩 `{}`，或者干脆不遵守 `response_format`。
 
 ---
 

@@ -65,7 +65,13 @@ object RequestBuilder {
         forceNoThinking = true,
     )
 
-    /** 成文：一次性，要求返回 JSON，带 isMine 标注 */
+    /**
+     * 成文：一次性，要求返回 JSON，带 isMine 标注。
+     *
+     * 和 [probe] 一样强制关掉思考：思考模式下模型倾向于在思维链里把话说完，
+     * 正文只剩一个 `{}` 或干脆不遵守 `response_format`。
+     * 成文要的是结构化的 JSON，不是推理过程。
+     */
     fun compose(
         cfg: ProviderConfig,
         systemPrompt: String,
@@ -79,6 +85,7 @@ object RequestBuilder {
         stream = false,
         temperature = 0.6,
         jsonMode = true,
+        forceNoThinking = true,
     )
 
     /** 拆角度：一次性，返回 JSON 数组 */

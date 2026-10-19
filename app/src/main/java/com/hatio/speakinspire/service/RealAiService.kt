@@ -92,6 +92,28 @@ class RealAiService(
         }
     }
 
+    /**
+     * 成文的消息序列：**最后一条必须是用户**。
+     *
+     * ## 为什么
+     *
+     * 追问常常停在「AI 刚问完、用户还没答」的位置。
+     * 这时候直接拿 rounds 拍平，`messages` 的最后一条是 `assistant`——
+     * 而 `response_format: json_object` 要求结尾是用户消息：
+     * 否则模型会把最后那句问题当成「要接着续写的话」，
+     * 而不是执行「写成文章」这件事。结果要么被拒，要么吐一段非 JSON。
+     *
+     * 所以末尾补一条明确的指令。它同时解决另一件事：
+     * 模型不必猜「现在该干什么」——系统提示里说要成文，
+     * 但对话看起来还在进行中。
+     */
+    private fun composeMessages(rounds: List<ChatMessage>): List<ChatMessage> = buildList {
+        addAll(rounds)
+        if (lastOrNull()?.isUser != true) {
+            add(ChatMessage.user("按上面的要求，把我说过的话整理成文章。只输出 JSON。"))
+        }
+    }
+
     /** 成文：一次性 JSON 输出。素材不足必须拒稿 */
     override suspend fun composeArticle(context: DeepeningContext): ComposeResult {
         val cfg = configProvider()
@@ -106,20 +128,26 @@ class RealAiService(
             val body = RequestBuilder.compose(
                 cfg,
                 Prompts.DRAFT_SYSTEM_PROMPT,
-                context.rounds,
+                composeMessages(context.rounds),
             )
             val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
             val content = ResponseParser.extractContent(raw)
-                ?: return ComposeResult.Failed(ErrorKindLite.UNKNOWN)
+            // 服务商回了 200，但里面没有 content。
+            // 这时候 raw 是唯一的线索——必须带出去，
+            // 否则「没写成」三个字后面什么依据都没有。
+                ?: return ComposeResult.Failed(
+                    ErrorKindLite.UNKNOWN,
+                    detail = "响应里没有 content 字段：${raw.take(300)}",
+                )
 
             parseCompose(content, context.materialSize)
         } catch (e: TransportException) {
-            // 把可归因的错误原样带出去。
+            // 把可归因的错误原样带出去，连服务商原文一起。
             // 之前所有异常都归成 NETWORK——用户 key 填错时会看到
             // 「网络不可用」，然后去查 WiFi，方向完全错了
-            ComposeResult.Failed(e.kind.toLite())
+            ComposeResult.Failed(e.kind.toLite(), detail = e.detail)
         } catch (e: Exception) {
-            ComposeResult.Failed(ErrorKindLite.NETWORK)
+            ComposeResult.Failed(ErrorKindLite.NETWORK, detail = e.message)
         }
     }
 
@@ -249,14 +277,23 @@ class RealAiService(
 
         // 逐个提取 paragraphs 数组里的 text/mine
         val parasRaw = extractArrayField(trimmed, "paragraphs")
-            ?: return ComposeResult.Failed(ErrorKindLite.UNKNOWN)
+            ?: return ComposeResult.Failed(
+                ErrorKindLite.UNKNOWN,
+                // 解析失败时，模型到底返回了什么才是关键线索
+                detail = "没有 paragraphs 字段，模型返回：${trimmed.take(300)}",
+            )
 
         val paragraphs = splitObjects(parasRaw).mapNotNull { obj ->
             val text = extractField(obj, "text") ?: return@mapNotNull null
             val mine = extractField(obj, "isMine")?.trim() == "true"
             DraftParagraph(text, isMine = mine)
         }
-        if (paragraphs.isEmpty()) return ComposeResult.Failed(ErrorKindLite.UNKNOWN)
+        if (paragraphs.isEmpty()) {
+            return ComposeResult.Failed(
+                ErrorKindLite.UNKNOWN,
+                detail = "paragraphs 里没有可取出的段落：${parasRaw.take(300)}",
+            )
+        }
         return ComposeResult.Success(title, paragraphs)
     }
 

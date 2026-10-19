@@ -135,7 +135,10 @@ fun NoteDetailScreen(
                 if (rounds.isNotEmpty()) {
                     Spacer(Modifier.height(Spacing.xl))
                     Text(
-                        text = "已追问 $rounds 轮",
+                        // 必须取 .size。直接插值 List 会把整个 toString() 打进界面——
+                        // 之前追问从来没成功过、rounds 恒为空，
+                        // 所以这一行直到第一次真正聊完才暴露出问题。
+                        text = "已追问 ${rounds.size} 轮",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline,
                     )

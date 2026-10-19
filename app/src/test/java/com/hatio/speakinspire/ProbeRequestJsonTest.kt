@@ -148,11 +148,15 @@ class ProbeRequestJsonTest {
     }
 
     @Test
-    fun `成文仍然尊重配置`() {
+    fun `成文也强制关掉思考`() {
+        // 思考模式下模型容易在思维链里把话说完，正文只剩 {} 或干脆不守 response_format
         val noThinking = cfg.copy(thinkingDisabled = false)
         val body = RequestBuilder.compose(noThinking, "提示", listOf(ChatMessage.user("素材")))
         MiniJson.parse(body)
-        assertTrue("没勾关思考就不该出现 thinking 参数", !body.contains("\"thinking\""))
+        assertTrue(
+            "成文也要 disabled：$body",
+            body.contains("\"thinking\":{\"type\":\"disabled\"}"),
+        )
     }
 
     @Test
