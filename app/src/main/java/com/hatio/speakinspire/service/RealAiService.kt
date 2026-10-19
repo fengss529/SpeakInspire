@@ -327,4 +327,8 @@ object ThinMaterial {
 class TransportException(
     val kind: ErrorKind,
     message: String? = null,
+    /** HTTP 状态码。0 表示没走到响应（断网、超时） */
+    val statusCode: Int = 0,
+    /** 服务商返回的错误原文。给 [ErrorMapper.humanize] 用，能让报错说得出原因 */
+    val detail: String? = null,
 ) : Exception(message)

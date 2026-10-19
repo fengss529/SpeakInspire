@@ -8,15 +8,24 @@ import com.hatio.speakinspire.data.model.Cue
 /**
  * 请求体构造。
  *
- * ## 两家服务商的 thinking 控制正好相反——最容易写错的地方
+ * ## 家服务商的 thinking 控制
  *
- * | 服务商 | 怎么控制思考模式 |
- * |---|---|
- * | DeepSeek | **换模型名**（`deepseek-reasoner` 才是思考版），非思考模型不用发参数 |
- * | MiMo | **请求参数**（`thinking:{"type":"disabled"}`），且**默认开启** |
+ * 两家都必须显式发 `thinking:{"type":"disabled"}`（实测 2026-10-16）：
+ * 不发的话会返回 `reasoning_content` 而 `content` 为空，
+ * 追问的逐字浮现会变成漫长的空白等待。
  *
- * 心智模型完全不同，所以 MiMo 必须显式发 disabled，
- * 否则首字延迟会很长——追问是流式逐字浮现的，延迟直接影响体验。
+ * ## ⚠️ 四个 builder 共用一条拼接路径
+ *
+ * 曾经 `probe`/`compose`/`angles`/`outline` 各拼各的 JSON，每个都写了一遍
+ * `messages` 数组的循环。其中两个漏了 system 后面的逗号，
+ * 产出 `[{system}{user}]` 这种非法 JSON——服务商稳定返回 400，
+ * 界面只显示「出了点问题，具体原因看不出来」。
+ *
+ * 表现就是：**追问提不出问题、写成文章也走不通**，而所有测试都是绿的
+ * （测试用的是 `body.contains(...)`，对语法错误完全免疫）。
+ *
+ * 现在只有 [chatBody] 一处拼 messages，四个入口都走它。
+ * `ProbeRequestJsonTest` 会把每个 builder 的产出真解析一遍。
  */
 object RequestBuilder {
 
@@ -28,24 +37,15 @@ object RequestBuilder {
         systemPrompt: String,
         messages: List<ChatMessage>,
         model: String? = null,
-    ): String {
-        val sb = StringBuilder()
-        sb.append("{")
-        sb.append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
-        sb.append(thinkingPrefix(cfg))
-        sb.append("\"stream\":true,")
-        sb.append("\"temperature\":0.7,")
-        sb.append("\"max_tokens\":200,")
-        sb.append("\"messages\":[")
-        sb.append("{\"role\":\"system\",\"content\":").append(jsonString(systemPrompt)).append("}")
-        messages.forEachIndexed { i, m ->
-            if (i > 0) sb.append(",")
-            sb.append("{\"role\":").append(jsonString(if (m.isUser) "user" else "assistant"))
-            sb.append(",\"content\":").append(jsonString(m.content)).append("}")
-        }
-        sb.append("]}")
-        return sb.toString()
-    }
+    ): String = chatBody(
+        cfg = cfg,
+        systemPrompt = systemPrompt,
+        messages = messages,
+        model = model,
+        stream = true,
+        temperature = 0.7,
+        maxTokens = 200,
+    )
 
     /** 成文：一次性，要求返回 JSON，带 isMine 标注 */
     fun compose(
@@ -53,24 +53,15 @@ object RequestBuilder {
         systemPrompt: String,
         messages: List<ChatMessage>,
         model: String? = null,
-    ): String {
-        val sb = StringBuilder()
-        sb.append("{")
-        sb.append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
-        sb.append(thinkingPrefix(cfg))
-        sb.append("\"stream\":false,")
-        sb.append("\"temperature\":0.6,")
-        sb.append("\"response_format\":{\"type\":\"json_object\"},")
-        sb.append("\"messages\":[")
-        sb.append("{\"role\":\"system\",\"content\":").append(jsonString(systemPrompt)).append("}")
-        messages.forEachIndexed { i, m ->
-            if (i > 0) sb.append(",")
-            sb.append("{\"role\":").append(jsonString(if (m.isUser) "user" else "assistant"))
-            sb.append(",\"content\":").append(jsonString(m.content)).append("}")
-        }
-        sb.append("]}")
-        return sb.toString()
-    }
+    ): String = chatBody(
+        cfg = cfg,
+        systemPrompt = systemPrompt,
+        messages = messages,
+        model = model,
+        stream = false,
+        temperature = 0.6,
+        jsonMode = true,
+    )
 
     /** 拆角度：一次性，返回 JSON 数组 */
     fun angles(
@@ -78,20 +69,15 @@ object RequestBuilder {
         systemPrompt: String,
         articleText: String,
         model: String? = null,
-    ): String {
-        val sb = StringBuilder()
-        sb.append("{")
-        sb.append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
-        sb.append(thinkingPrefix(cfg))
-        sb.append("\"stream\":false,")
-        sb.append("\"temperature\":0.8,")
-        sb.append("\"response_format\":{\"type\":\"json_object\"},")
-        sb.append("\"messages\":[")
-        sb.append("{\"role\":\"system\",\"content\":").append(jsonString(systemPrompt)).append("},")
-        sb.append("{\"role\":\"user\",\"content\":").append(jsonString(articleText)).append("}")
-        sb.append("]}")
-        return sb.toString()
-    }
+    ): String = chatBody(
+        cfg = cfg,
+        systemPrompt = systemPrompt,
+        messages = listOf(ChatMessage.user(articleText)),
+        model = model,
+        stream = false,
+        temperature = 0.8,
+        jsonMode = true,
+    )
 
     /** 生成骨架：一次性 */
     fun outline(
@@ -99,20 +85,15 @@ object RequestBuilder {
         systemPrompt: String,
         angle: String,
         model: String? = null,
-    ): String {
-        val sb = StringBuilder()
-        sb.append("{")
-        sb.append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
-        sb.append(thinkingPrefix(cfg))
-        sb.append("\"stream\":false,")
-        sb.append("\"temperature\":0.7,")
-        sb.append("\"response_format\":{\"type\":\"json_object\"},")
-        sb.append("\"messages\":[")
-        sb.append("{\"role\":\"system\",\"content\":").append(jsonString(systemPrompt)).append("},")
-        sb.append("{\"role\":\"user\",\"content\":").append(jsonString("切入角度：$angle")).append("}")
-        sb.append("]}")
-        return sb.toString()
-    }
+    ): String = chatBody(
+        cfg = cfg,
+        systemPrompt = systemPrompt,
+        messages = listOf(ChatMessage.user("切入角度：$angle")),
+        model = model,
+        stream = false,
+        temperature = 0.7,
+        jsonMode = true,
+    )
 
     /** 连接测试：最短请求，不消耗对话配额 */
     fun ping(cfg: ProviderConfig): String =
@@ -121,10 +102,45 @@ object RequestBuilder {
             "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
 
     /**
+     * 唯一的请求体拼接入口。
+     *
+     * 顺序与逗号都在这里一次写对，调用方不可能再漏。
+     */
+    private fun chatBody(
+        cfg: ProviderConfig,
+        systemPrompt: String,
+        messages: List<ChatMessage>,
+        model: String?,
+        stream: Boolean,
+        temperature: Double,
+        maxTokens: Int? = null,
+        jsonMode: Boolean = false,
+    ): String = buildString {
+        append("{")
+        append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
+        append(thinkingPrefix(cfg))
+        append("\"stream\":").append(stream).append(",")
+        append("\"temperature\":").append(temperature).append(",")
+        if (maxTokens != null) append("\"max_tokens\":").append(maxTokens).append(",")
+        if (jsonMode) append("\"response_format\":{\"type\":\"json_object\"},")
+
+        append("\"messages\":[")
+        // system 永远排第一。这里就把 messages 数组完整拼出来，
+        // 逗号只在「不是第一条」时加——一处对，处处对。
+        append("{\"role\":\"system\",\"content\":").append(jsonString(systemPrompt)).append("}")
+        messages.forEach { m ->
+            append(",")
+            append("{\"role\":").append(jsonString(if (m.isUser) "user" else "assistant"))
+            append(",\"content\":").append(jsonString(m.content)).append("}")
+        }
+        append("]")
+        append("}")
+    }
+
+    /**
      * thinking 参数前缀。
      *
-     * MiMo 默认开启思考，必须显式关闭；
-     * DeepSeek 靠换模型名控制，发这个参数反而可能出问题。
+     * 两家默认都开思考，必须显式关闭；不需要时**一个字节都不发**。
      */
     private fun thinkingPrefix(cfg: ProviderConfig): String =
         if (ProviderDialect.needsThinkingParam(cfg) && cfg.thinkingDisabled)

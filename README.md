@@ -3,11 +3,11 @@
 提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 成文章 → 转选题 → 拍摄**。
 
 ```bash
-gradlew.bat test                # 跑全部 308 条单元测试
+gradlew.bat test                # 跑全部 327 条单元测试
 gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 ```
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8**（versionCode 8）。
+包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.1**（versionCode 9）。
 
 ---
 
@@ -19,7 +19,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | 服务层 | ✅ | `RealAiService` 已接真实模型（DeepSeek / MiMo，OpenAI 兼容） |
 | 领域层 | ✅ | 8 状态派生 + 手势判定，纯函数 |
 | UI | ✅ | 五格导航 + 记录详情 + 编辑 + 追问 + 成文 + 转选题 + 设置 |
-| 测试 | ✅ | **308 条，0 失败**（含追问→成文→选题的链路测试） |
+| 测试 | ✅ | **327 条，0 失败**（含追问→成文→选题的链路测试） |
 | 未开始 | ⬜ | 拍摄后反馈（P2 的核心风险点） |
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（来源视图）→ 转选题（骨架）→ 标记已拍摄。
@@ -59,16 +59,17 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `ProviderDialectTest` | 17 | 服务商差异 + SSE 容错 |
 | `FakeAiServiceTest` | 16 | Fake 六项能力自测 |
 | `RequestBuilderTest` | 15 | 请求体拼装、thinking 参数 |
-| `ErrorMapperTest` | 12 | 错误归因 |
+| `ErrorMapperTest` | 20 | 错误归因、**400 不再落到「看不出来」** |
 | `SettingsUiStateTest` | 10 | 设置页状态 |
 | **`DeepeningFlowTest`** | **12** | **追问→成文→选题的真实链路** |
 | `ProbeMethodTest` | 15 | **四种追问方法：彼此不同、边界相同** |
+| **`ProbeRequestJsonTest`** | **11** | **四个 builder 的请求体真解析一遍** |
 | `ModelOutputParserTest` | 8 | 成文 / 角度 / 骨架解析 |
 | `GestureJudgeTest` | 7 | 右滑标记 / 左滑搁置 |
 | `ResponseParserTest` / `SseParserTest` | 12 | 响应与帧解析 |
 | `EditNoteTest` | 5 | 编辑写库 |
 | `AiServiceContractTest` / `ComposeResultTest` | 7 | 三方法必须分开 |
-| **合计** | **308** | **0 失败** |
+| **合计** | **327** | **0 失败** |
 
 ### 测试的盲区（踩过）
 
@@ -158,6 +159,43 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 配套：模型一个字都没吐出来时，`DeepeningViewModel` 会给一句可执行提示
 （「去设置里确认『关掉思考模式』是勾上的」），而不是让页面空着。
 
+### V0.8.1：上一版修完之后反而报错了
+
+补上原始记录之后，真机立刻变成「出了点问题，具体原因看不出来」。
+原因是 `RequestBuilder.probe` 拼 `messages` 时**漏了 system 后面的逗号**：
+
+```
+"messages":[{"role":"system","content":"..."}{"role":"user","content":"..."}]
+                                              ↑ 少一个逗号
+```
+
+服务商稳定返回 400。**`compose` 也漏了同一个逗号**——
+所以「写成文章」其实从来没成功过，只是没人走到那一步。
+
+这个 bug 活了这么久，是因为四个 builder 各拼各的 JSON，
+而所有测试用的都是 `body.contains("...")`——**对语法错误完全免疫**。
+
+现在四个入口共用 `RequestBuilder.chatBody` 一条拼接路径，
+`ProbeRequestJsonTest` 自带一个极简 JSON 解析器，把每个 builder 的产出
+**真解析一遍**。11 条测试里 7 条在修复前是红的。
+
+### V0.8.1：报错必须说得出原因
+
+400 以前落到 `UNKNOWN`，话术是「出了点问题，具体原因看不出来」。
+可 400 恰恰是唯一一种「App 自己写错了」的错误——把它归成「看不出来」
+等于放弃诊断，用户唯一的出路是重试，重试还是错，然后就放弃了。
+
+现在 `ErrorKind.BAD_REQUEST` 单独归一类，`TransportException` 带上
+`statusCode` 与 `detail`（服务商原文），`ErrorMapper.humanize(kind, detail)`
+会把 `message` 字段截断后附在话术末尾。用户下次截图就能说清发生了什么。
+
+### V0.8.1：去掉标题下的五个小灰点
+
+它们看着像进度，实际什么也不说明：用户不知道自己该聊几轮，
+而「还剩几个」正是这版刻意不显示的——倒计时会诱发敷衍作答。
+一个永远数不出意义的点阵只是装饰。方法名留着，它回答的是
+「我在设置里换的问法生效了吗」。
+
 ---
 
 ## 追问的 Round 语义（曾写错，务必看清）
@@ -171,8 +209,8 @@ AI 再问    → rounds + Round(新问题, null)
 ```
 
 早期实现是「回答时新增一轮空问题的 Round，下一问到达时 `dropLast(1)` 删掉」——
-于是每答一次就把刚说的那句话丢掉：折叠区空白、进度点不亮、成文素材为 0。
-`DeepeningFlowTest` 守着这条。
+于是每答一次就把刚说的那句话丢掉：折叠区空白、成文素材为 0（进度点当时也没亮，
+不过那排点 V0.8.1 已经去掉了）。`DeepeningFlowTest` 守着这条。
 
 ---
 

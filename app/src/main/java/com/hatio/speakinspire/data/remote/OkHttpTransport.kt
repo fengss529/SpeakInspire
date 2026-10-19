@@ -31,9 +31,13 @@ class OkHttpTransport(
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val errBody = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
+                val kind = ErrorMapper.map(response.code, errBody)
+                // 状态码和原文一起带出去——界面才有话可说
                 throw TransportException(
-                    ErrorMapper.map(response.code, errBody),
-                    ErrorMapper.humanize(ErrorMapper.map(response.code, errBody)),
+                    kind = kind,
+                    message = ErrorMapper.humanize(kind, errBody),
+                    statusCode = response.code,
+                    detail = errBody,
                 )
             }
             val source = response.body?.source() ?: throw TransportException(ErrorKind.MALFORMED_STREAM)
@@ -67,7 +71,12 @@ class OkHttpTransport(
                 val text = runCatching { response.body?.string().orEmpty() }.getOrDefault("")
                 if (!response.isSuccessful) {
                     val kind = ErrorMapper.map(response.code, text)
-                    throw TransportException(kind, ErrorMapper.humanize(kind))
+                    throw TransportException(
+                        kind = kind,
+                        message = ErrorMapper.humanize(kind, text),
+                        statusCode = response.code,
+                        detail = text,
+                    )
                 }
                 return text
             }

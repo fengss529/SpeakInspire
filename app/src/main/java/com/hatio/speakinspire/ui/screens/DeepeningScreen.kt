@@ -133,23 +133,21 @@ fun DeepeningScreen(
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                         )
-                        // 进度点旁边标一句问法。
+                        // 只标一句问法，不放进度点。
                         //
-                        // 用户在设置里换了方法，回到这里如果毫无变化，
-                        // 他会怀疑「是不是没生效」。一行小字就能回答这个问题，
-                        // 也不占纵向空间——追问页的高度很紧。
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            ProgressDots(
-                                lit = state.answeredCount,
-                                total = state.maxRounds,
-                            )
-                            Spacer(Modifier.width(Spacing.s))
-                            Text(
-                                text = state.probeMethod.label,
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.outline,
-                            )
-                        }
+                        // 五个小灰点看着像进度，实际什么也不说明：
+                        // 用户不知道自己该聊几轮，而"还剩几个"恰恰是
+                        // 这版刻意不显示的——倒计时会诱发敷衍作答。
+                        // 一个永远数不出意义的点阵，只是装饰。
+                        //
+                        // 留下方法名是有用的：用户在设置里换了问法，
+                        // 回到这里如果毫无变化，他会怀疑「是不是没生效」。
+                        Text(
+                            text = state.probeMethod.label,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
                     }
                 },
                 actions = {
@@ -269,6 +267,9 @@ fun DeepeningScreen(
                         state.busy && state.rounds.isEmpty() -> "AI 正在想第一个问题…"
                         state.busy -> "AI 正在想下一个问题…"
                         state.awaitingAnswer -> "回应它"
+                        // 出错后输入框是灰的。写「等一会儿」会让人以为还在转，
+                        // 于是就一直等——这里必须指向那唯一的出路
+                        state.errorMessage != null -> "先点上面的「再试一次」"
                         else -> "等一会儿…"
                     },
                     onChange = { input = it },
@@ -284,34 +285,8 @@ fun DeepeningScreen(
 }
 
 /**
- * 进度点。
- *
- * **用户发送后才点亮**——这是刻意的。
- * 如果 AI 问完就点亮，用户会觉得「只要它问完就算我答过了」，
- * 于是敷衍作答。点亮必须代表用户真的说了什么。
+ * 原始笔记。灰色底，表示「这是起点」
  */
-@Composable
-fun ProgressDots(lit: Int, total: Int, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.padding(top = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        repeat(total) { i ->
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (i < lit) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outlineVariant
-                    ),
-            )
-        }
-    }
-}
-
-/** 原始笔记。灰色底，表示「这是起点」 */
 @Composable
 private fun OriginCard(body: String) {
     Column(

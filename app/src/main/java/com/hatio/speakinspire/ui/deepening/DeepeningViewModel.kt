@@ -303,10 +303,18 @@ class DeepeningViewModel @Inject constructor(
         )
     }
 
-    private fun humanize(e: Exception): String =
-        ErrorMapper.humanize(
-            (e as? TransportException)?.kind ?: ErrorKind.NETWORK_UNAVAILABLE
-        )
+    /**
+     * 错误 → 人话。
+     *
+     * 关键在于**把服务商的原话带出去**。
+     * 之前这里只按错误类型查一句话术，400 落到「出了点问题，
+     * 具体原因看不出来」——用户唯一的出路是重试，重试还是错，
+     * 然后就放弃了。带上原文之后，他至少能截图说清发生了什么。
+     */
+    private fun humanize(e: Exception): String = when (e) {
+        is TransportException -> ErrorMapper.humanize(e.kind, e.detail)
+        else -> ErrorMapper.humanize(ErrorKind.UNKNOWN, e.message)
+    }
 
     /**
      * 把 Round 列表拍平成 ChatMessage 序列。

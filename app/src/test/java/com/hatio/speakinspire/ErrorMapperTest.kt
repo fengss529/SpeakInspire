@@ -79,6 +79,66 @@ class ErrorMapperTest {
         assertEquals(ErrorKind.UNKNOWN, ErrorMapper.map(503, ""))
     }
 
+    /**
+     * 400 曾经落到 UNKNOWN，话术是「出了点问题，具体原因看不出来」。
+     *
+     * 而 400 恰恰是**唯一一种「App 自己写错了」**的错误——
+     * 请求体少个逗号就会稳定触发。归到「看不出来」等于放弃诊断。
+     */
+    @Test
+    fun `400 归为请求被拒而不是未知`() {
+        assertEquals(
+            ErrorKind.BAD_REQUEST,
+            ErrorMapper.map(400, "{\"error\":{\"message\":\"Invalid JSON\"}}"),
+        )
+    }
+
+    @Test
+    fun `422 同样归为请求被拒`() {
+        assertEquals(ErrorKind.BAD_REQUEST, ErrorMapper.map(422, ""))
+    }
+
+    @Test
+    fun `请求被拒时归类是 App 的问题而不是用户的 key`() {
+        val msg = ErrorMapper.humanize(ErrorKind.BAD_REQUEST)
+        assertTrue("应说明不是用户填错了", msg.contains("不是你填错"))
+    }
+
+    // ---------- 把服务商原话带出来 ----------
+
+    @Test
+    fun `带原文时话术附上服务商的 message`() {
+        val msg = ErrorMapper.humanize(
+            ErrorKind.BAD_REQUEST,
+            "{\"error\":{\"message\":\"messages[1]: missing comma\",\"type\":\"invalid_request\"}}",
+        )
+        assertTrue("应带出 message 内容：$msg", msg.contains("missing comma"))
+    }
+
+    @Test
+    fun `原文不是 JSON 时也能原样带出`() {
+        val msg = ErrorMapper.humanize(ErrorKind.BAD_REQUEST, "Bad Gateway: upstream reset")
+        assertTrue(msg.contains("upstream reset"))
+    }
+
+    @Test
+    fun `原文过长会截断而不是撑爆气泡`() {
+        val msg = ErrorMapper.humanize(ErrorKind.BAD_REQUEST, "错".repeat(500))
+        assertTrue("整体长度应受控：${msg.length}", msg.length < 300)
+    }
+
+    @Test
+    fun `没给原文时不显示空的详情行`() {
+        val msg = ErrorMapper.humanize(ErrorKind.NETWORK_UNAVAILABLE, null)
+        assertTrue("不该出现空详情", !msg.contains("详情："))
+    }
+
+    @Test
+    fun `原文首尾空白不该产生只有空格的详情`() {
+        val msg = ErrorMapper.humanize(ErrorKind.UNKNOWN, "   \n  ")
+        assertTrue("空白原文应当忽略", !msg.contains("详情："))
+    }
+
     // ---------- 人话话术 ----------
 
     @Test
