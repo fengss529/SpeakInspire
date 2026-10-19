@@ -107,7 +107,7 @@ class MainViewModel @Inject constructor(
  * 因为状态是算出来的，存下来反而会不一致。
  */
 data class MainUiState(
-    /** 「记录」tab：待深化的想法，按时间正序 */
+    /** 「记录」tab：**全部**记录，按时间倒序（不是待办队列） */
     val record: List<IdeaView> = emptyList(),
     /** 「思考」tab：已成文章的作品，适合拍的排前面 */
     val think: List<IdeaView> = emptyList(),
@@ -125,6 +125,9 @@ data class MainUiState(
             IdeaStateDeriver.derive(it) in setOf(
                 IdeaState.DEEPENED, IdeaState.ARTICLED,
                 IdeaState.TOPIC, IdeaState.SHOT, IdeaState.PARKED,
+                // 已过时 = 以这条为起点新建、新那条拍完了。
+                // 它同样走完了深化，漏掉会让「深化率」偏低
+                IdeaState.STALE,
             )
         },
         articlEd = allIdeas.count { it.article != null },

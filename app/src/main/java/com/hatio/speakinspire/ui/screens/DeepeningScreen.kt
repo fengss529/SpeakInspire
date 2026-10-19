@@ -80,6 +80,8 @@ fun DeepeningScreen(
     onSkip: () -> Unit,
     onFinishEarly: () -> Unit,
     onCompose: () -> Unit,
+    /** 「先留着」——收尾但不写文章，回到记录详情 */
+    onKeep: () -> Unit,
     /** 没有任何问题时，让用户能重新触发一次——卡住时的兜底出路 */
     onRetry: () -> Unit,
 ) {
@@ -98,8 +100,11 @@ fun DeepeningScreen(
     // 真机反馈的「点 AI 追问后卡住」有一半是这个：
     // 页面停在那里，输入框要用户先点一下才知道能打字。
     // 有问题等着就该直接能打字——意图不用解释。
-    LaunchedEffect(state.pendingAnswer) {
-        if (state.pendingAnswer) {
+    //
+    // 用递增的 focusTick 而不是布尔值：布尔值从 false 变 true 只触发一次，
+    // 第二个问题到来时值没变，键盘就不会再弹。
+    LaunchedEffect(state.focusTick) {
+        if (state.focusTick > 0) {
             inputFocus.requestFocus()
         }
     }
@@ -223,6 +228,7 @@ fun DeepeningScreen(
                             composing = state.composing,
                             userSaidCount = state.completedRounds,
                             onCompose = onCompose,
+                            onKeep = onKeep,
                         )
                     }
                 }
@@ -230,7 +236,7 @@ fun DeepeningScreen(
                 // 错误提示
                 state.errorMessage?.let { msg ->
                     item("error") {
-                        ErrorHint(msg)
+                        ErrorHint(msg, onRetry = onRetry)
                     }
                 }
             }
@@ -240,13 +246,17 @@ fun DeepeningScreen(
                 InputBar(
                     focusRequester = inputFocus,
                     value = input,
-                    // AI 还在出第一个问题时不给输入——
-                    // 那时候用户还没看到问题，输入了也不知道回什么
-                    enabled = !state.busy && state.answeredCount > 0,
-                    placeholder = if (state.answeredCount == 0) {
-                        "AI 正在想第一个问题…"
-                    } else {
-                        "回应它"
+                    // 只有「确实有一个问题在等回答」时才能输入。
+                    //
+                    // 之前用 answeredCount > 0 判断：重新进入一条只问过、
+                    // 还没答过的记录时 answeredCount 是 0，输入框永久禁用，
+                    // 用户看着一个问题却打不了字——和「卡住」是同一类死局。
+                    enabled = !state.busy && state.awaitingAnswer,
+                    placeholder = when {
+                        state.busy && state.rounds.isEmpty() -> "AI 正在想第一个问题…"
+                        state.busy -> "AI 正在想下一个问题…"
+                        state.awaitingAnswer -> "回应它"
+                        else -> "等一会儿…"
                     },
                     onChange = { input = it },
                     onSend = {
@@ -419,6 +429,7 @@ private fun FinishCard(
     composing: Boolean,
     userSaidCount: Int,
     onCompose: () -> Unit,
+    onKeep: () -> Unit,
 ) {
     Column(
         Modifier
@@ -454,9 +465,12 @@ private fun FinishCard(
         Spacer(Modifier.height(Spacing.s))
 
         // 「先留着」是平级选项，不是取消——
-        // 深度追问后不想要文章是完全合理的
+        // 深度追问后不想要文章是完全合理的。
+        //
+        // 它必须真的做事：收尾并回到详情页。
+        // 之前 onClick 是空 lambda，点了没反应，用户会以为按钮坏了。
         OutlinedButton(
-            onClick = {},
+            onClick = onKeep,
             enabled = !composing,
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -466,7 +480,7 @@ private fun FinishCard(
 }
 
 @Composable
-private fun ErrorHint(message: String) {
+private fun ErrorHint(message: String, onRetry: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -480,6 +494,11 @@ private fun ErrorHint(message: String) {
             lineHeight = 20.sp,
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
+        // 报错必须配一条出路。
+        // 只有错误文案的话，用户唯一能做的还是退出。
+        TextButton(onClick = onRetry) {
+            Text("再试一次", fontSize = 13.sp)
+        }
     }
 }
 

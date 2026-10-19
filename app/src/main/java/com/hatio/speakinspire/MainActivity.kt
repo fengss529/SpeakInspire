@@ -75,7 +75,15 @@ private sealed interface Route {
 
     data class Deepening(val noteId: String) : Route
     data class Compose(val noteId: String) : Route
-    data class Convert(val noteId: String) : Route
+
+    /**
+     * 拍摄骨架页。
+     *
+     * [fromHome] 区分入口：从选题 tab 直接点进来的，返回该回选题列表；
+     * 从成文页一路走下来的，返回该回成文页。
+     * 不区分的话，从列表点进骨架、左滑却掉进成文页，用户会莫名其妙。
+     */
+    data class Convert(val noteId: String, val fromHome: Boolean = false) : Route
 
     /**
      * 从哪来。
@@ -93,7 +101,7 @@ private sealed interface Route {
             is Edit -> Detail(noteId)
             is Deepening -> Detail(noteId)
             is Compose -> Deepening(noteId)
-            is Convert -> Compose(noteId)
+            is Convert -> if (fromHome) Home else Compose(noteId)
         }
 }
 
@@ -136,7 +144,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     )
                     MainTab.TOPIC -> TopicScreen(
                         ideas = state.topic,
-                        onOpen = { id -> route = Route.Deepening(id) },
+                        // 选题 tab 里点开的是「这条待拍的骨架」，
+                        // 不是再跟 AI 聊一轮——之前错进了追问页
+                        onOpen = { id -> route = Route.Convert(id, fromHome = true) },
                         onMarkShot = markShotHandler,
                         onPark = { vm.park(it) },
                         onUndoShot = { vm.undoShot(it) },
@@ -173,6 +183,8 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onSave = { svm.save() },
                 onSavedConsumed = { svm.consumeSavedFlag() },
                 onAddModel = { svm.addModel() },
+                onCommitModel = { svm.commitNewModel(it) },
+                onCancelAddModel = { svm.cancelAddModel() },
             )
         }
 
@@ -229,7 +241,8 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             ConvertTopicScreen(
                 state = tstate,
                 onBack = { route = r.parent ?: Route.Home },
-                onDerive = { tvm.deriveAngles(tstate.articleTitle, emptyList()) },
+                // 重试要重新读正文——只拿标题去拆角度，拆出来的东西没有依据
+                onDerive = { tvm.rederive() },
                 onChooseAngle = { tvm.chooseAngle(it) },
                 onBackToAngles = { tvm.back() },
                 onSave = { tvm.saveScript() },
@@ -244,16 +257,21 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             val cstate by cvm.state.collectAsStateWithLifecycle()
             LaunchedEffect(r.noteId) {
                 cvm.load(r.noteId)
-                if (!cstate.hasContent && !cstate.alreadyComposed) cvm.compose()
+                // 读 ViewModel 自己的 StateFlow 而不是组合里的 cstate：
+                // load() 刚写完状态，collectAsState 还没重组，
+                // 这时读 cstate 拿到的是旧值，会误判成「没有文章」而重复生成
+                if (!cvm.state.value.hasContent && !cvm.state.value.alreadyComposed) {
+                    cvm.compose()
+                }
             }
             ComposeScreen(
                 state = cstate,
                 onBack = { route = r.parent ?: Route.Home },
                 onRetry = { cvm.compose() },
                 onToggleSource = { cvm.toggleSourceMode() },
+                // 存完再跳——保存是异步的，先跳会读到还没落盘的文章
                 onSave = {
-                    cvm.save()
-                    route = Route.Convert(r.noteId)
+                    cvm.save { route = Route.Convert(r.noteId) }
                 },
                 onGoBackToDeepening = { route = Route.Deepening(r.noteId) },
             )
@@ -270,6 +288,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onSkip = { dvm.skipTyping() },
                 onFinishEarly = { dvm.finishEarly() },
                 onCompose = { route = Route.Compose(r.noteId) },
+                // 「先留着」= 收尾 + 回详情，不写文章
+                onKeep = {
+                    dvm.finishEarly()
+                    route = Route.Detail(r.noteId)
+                },
                 onRetry = { dvm.retryFirstQuestion() },
             )
         }

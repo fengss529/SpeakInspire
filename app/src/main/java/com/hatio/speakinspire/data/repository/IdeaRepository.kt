@@ -71,7 +71,13 @@ class IdeaRepository(
         }
     }
 
-    /** 「深化」tab 用——只含待深化的，按创建时间正序 */
+    /**
+     * 已废弃：名字叫「深化队列」，但现在返回的是全部记录（时间倒序）。
+     *
+     * 记录 tab 已经改用 [IdeaStateDeriver.recordTimeline] 的语义——
+     * 「我记过什么」不该随状态变化而增减。
+     * 保留这个函数只是为了不破坏旧调用点，新代码请直接用 [observeIdeas]。
+     */
     fun observeDeepeningQueue(): Flow<List<IdeaView>> =
         observeIdeas().map { IdeaStateDeriver.recordTimeline(it) }
 

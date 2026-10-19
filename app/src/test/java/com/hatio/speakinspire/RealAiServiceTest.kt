@@ -463,6 +463,19 @@ class RealAiServiceTest {
     }
 
     @Test
+    fun `key 无效时归因为鉴权失败而不是网络`() = runBlocking {
+        // 归错类会让用户去查 WiFi，而真正的问题在设置页的 key
+        val t = FakeTransport()
+        t.throwOnPost = TransportException(ErrorKind.INVALID_API_KEY)
+        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("回答"))))
+        assertTrue(r is ComposeResult.Failed)
+        assertEquals(
+            ErrorKindLite.UNAUTHORIZED,
+            (r as ComposeResult.Failed).kind,
+        )
+    }
+
+    @Test
     fun `空响应不产生空文章`() = runBlocking {
         val t = FakeTransport()
         t.postResponse = """{"choices":[]}"""

@@ -36,7 +36,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +73,9 @@ fun SettingsScreen(
     onSelectProvider: (String) -> Unit,
     onSelectModel: (String) -> Unit,
     onAddModel: () -> Unit,
+    /** 自定义模型名确认后回调 */
+    onCommitModel: (String) -> Unit,
+    onCancelAddModel: () -> Unit,
     onBaseUrl: (String) -> Unit,
     onModel: (String) -> Unit,
     onApiKey: (String) -> Unit,
@@ -198,6 +204,30 @@ fun SettingsScreen(
 
                 TextButton(onClick = onAddModel) {
                     Text("填其他模型名", fontSize = 12.sp)
+                }
+
+                // 点了「填其他模型名」得真的出现输入框。
+                // 之前这里只把 addingModel 置了 true，界面上什么都不渲染，
+                // 按钮点了没反应——和「先留着」是同一类死按钮。
+                if (state.addingModel) {
+                    var newModel by remember(state.addingModel) { mutableStateOf("") }
+                    Spacer(Modifier.height(Spacing.s))
+                    InputField(
+                        value = newModel,
+                        onChange = { newModel = it },
+                        placeholder = "模型名，如 deepseek-chat",
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                        Button(
+                            onClick = { onCommitModel(newModel) },
+                            enabled = newModel.isNotBlank(),
+                        ) {
+                            Text("用这个模型")
+                        }
+                        TextButton(onClick = onCancelAddModel) {
+                            Text("取消")
+                        }
+                    }
                 }
             }
 

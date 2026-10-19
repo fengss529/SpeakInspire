@@ -52,14 +52,29 @@ class TopicViewModel @Inject constructor(
             val existing = idea.scripts.firstOrNull { !it.parked }
             _state.value = TopicUiState(
                 noteId = noteId,
+                // 选题必须挂在**真实存在的**文章 id 上。
+                // 之前这里是 articleId = "a_$noteId"，
+                // 而文章的 id 是随机 UUID——外键对不上，
+                // 要么插入时违反约束崩掉，要么选题挂到不存在的文章上，
+                // 结果就是「存了选题但选题 tab 里没有」。
+                articleId = idea.article?.id ?: "",
                 articleTitle = idea.article?.title ?: idea.note.title,
                 existingScript = existing,
                 shotAt = existing?.shotAt,
             )
             // 还没有选题就去拆角度
             if (existing == null && idea.article != null) {
-                deriveAngles(idea.article.title, idea.article!!.paragraphs.map { it.text })
+                deriveAngles(idea.article.title, idea.article.paragraphs.map { it.text })
             }
+        }
+    }
+
+    /** 「再试一次」：重新读文章正文再拆角度，不能只拿标题去拆 */
+    fun rederive() {
+        viewModelScope.launch {
+            val idea = repo.findIdea(_state.value.noteId) ?: return@launch
+            val article = idea.article ?: return@launch
+            deriveAngles(article.title, article.paragraphs.map { it.text })
         }
     }
 
@@ -113,11 +128,13 @@ class TopicViewModel @Inject constructor(
         val angle = current.chosenAngle ?: return
         val outline = current.outline ?: return
         if (outline.sections.isEmpty()) return
+        // 没有文章就没有可挂的选题——不猜 id，直接不存
+        if (current.articleId.isBlank()) return
 
         viewModelScope.launch {
             val script = Script(
                 id = UUID.randomUUID().toString(),
-                articleId = "a_${current.noteId}",
+                articleId = current.articleId,
                 angle = angle.title,
                 sections = outline.sections.map { s ->
                     Section(
@@ -130,7 +147,12 @@ class TopicViewModel @Inject constructor(
                 createdAt = System.currentTimeMillis(),
             )
             repo.saveScript(script)
-            _state.value = _state.value.copy(saved = true)
+            // 存完立刻切到「已保存」视图：
+            // 停在原地不动会让用户以为没存上，再点一次就多出一条选题
+            _state.value = _state.value.copy(
+                existingScript = script,
+                saved = true,
+            )
         }
     }
 
@@ -180,6 +202,8 @@ enum class TopicStep { ANGLES, OUTLINE }
 
 data class TopicUiState(
     val noteId: String = "",
+    /** 选题所属文章的真实 id。空表示这篇文章还没写成 */
+    val articleId: String = "",
     val articleTitle: String = "",
     val step: TopicStep = TopicStep.ANGLES,
     val angles: List<Angle> = emptyList(),

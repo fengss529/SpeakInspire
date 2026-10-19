@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -50,6 +49,16 @@ class ComposeViewModel @Inject constructor(
             val idea = repo.findIdea(noteId) ?: return@launch
             _state.value = ComposeUiState(
                 noteId = noteId,
+                // 文章 id 必须跟库里的一致。
+                //
+                // 之前每次 load 都保留 UiState 默认的随机 UUID，
+                // 于是「改完再存」会插入第二篇文章（一个 note 挂两篇），
+                // 而选题表的 articleId 永远指向旧的那篇——
+                // 表现就是「存了选题但选题 tab 里没有」。
+                //
+                // 没有文章时用 a_noteId 这个确定性的 id，
+                // 重复保存就是 upsert，不会产生副本。
+                articleId = idea.article?.id ?: "a_$noteId",
                 title = idea.article?.title ?: "",
                 paragraphs = idea.article?.paragraphs ?: emptyList(),
                 alreadyComposed = idea.article != null,
@@ -126,10 +135,16 @@ class ComposeViewModel @Inject constructor(
         }
     }
 
-    /** 保存文章。永久留存于思考库——它是资产不是消耗品 */
-    fun save() {
+    /**
+     * 保存文章。永久留存于思考库——它是资产不是消耗品。
+     *
+     * [onSaved] 在写库**之后**才调用。界面靠它跳转下一页——
+     * 之前是先跳转再异步保存，下一页读库时文章还没落盘，
+     * 于是转选题页看到的是「没有文章」，角度拆不出来。
+     */
+    fun save(onSaved: () -> Unit = {}) {
         val current = _state.value
-        if (current.title.isBlank() || current.paragraphs.isEmpty()) return
+        if (!current.canSave) return
         viewModelScope.launch {
             repo.saveArticle(
                 Article(
@@ -142,6 +157,7 @@ class ComposeViewModel @Inject constructor(
                 )
             )
             _state.value = _state.value.copy(saved = true)
+            onSaved()
         }
     }
 
@@ -172,7 +188,11 @@ class ComposeViewModel @Inject constructor(
 
 data class ComposeUiState(
     val noteId: String = "",
-    val articleId: String = UUID.randomUUID().toString(),
+    /**
+     * 文章 id。**不要用随机 UUID 做默认值**——
+     * load() 必须显式给出与库里一致的 id，否则每次保存都会插一篇新文章。
+     */
+    val articleId: String = "",
     val title: String = "",
     val paragraphs: List<Paragraph> = emptyList(),
     val originalNote: String = "",

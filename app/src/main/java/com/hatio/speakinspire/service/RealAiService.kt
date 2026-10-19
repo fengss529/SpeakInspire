@@ -70,6 +70,11 @@ class RealAiService(
                 ?: return ComposeResult.Failed(ErrorKindLite.UNKNOWN)
 
             parseCompose(content, context.materialSize)
+        } catch (e: TransportException) {
+            // 把可归因的错误原样带出去。
+            // 之前所有异常都归成 NETWORK——用户 key 填错时会看到
+            // 「网络不可用」，然后去查 WiFi，方向完全错了
+            ComposeResult.Failed(e.kind.toLite())
         } catch (e: Exception) {
             ComposeResult.Failed(ErrorKindLite.NETWORK)
         }
@@ -240,6 +245,19 @@ class RealAiService(
             val text = extractField(c, "text") ?: return@mapNotNull null
             ShootingCue(icon = extractField(c, "icon") ?: "", text = text)
         }
+    }
+
+    /**
+     * 可归因错误 → 轻量错误类型（供 ComposeResult.Failed 携带）。
+     *
+     * 没映射的一律落到 UNKNOWN，而不是 NETWORK——
+     * 「不知道」比「是网络问题」更诚实。
+     */
+    private fun ErrorKind.toLite(): ErrorKindLite = when (this) {
+        ErrorKind.INVALID_API_KEY, ErrorKind.MODEL_NOT_FOUND -> ErrorKindLite.UNAUTHORIZED
+        ErrorKind.RATE_LIMITED -> ErrorKindLite.RATE_LIMITED
+        ErrorKind.NETWORK_UNAVAILABLE, ErrorKind.MALFORMED_STREAM -> ErrorKindLite.NETWORK
+        else -> ErrorKindLite.UNKNOWN
     }
 
     /** 去掉模型可能加的 ```json 包裹 */

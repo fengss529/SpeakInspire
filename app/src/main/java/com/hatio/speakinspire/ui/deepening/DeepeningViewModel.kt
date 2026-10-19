@@ -2,22 +2,21 @@ package com.hatio.speakinspire.ui.deepening
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.hatio.speakinspire.data.local.SimpleJson
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.DeepeningContext
 import com.hatio.speakinspire.service.ErrorKind
+import com.hatio.speakinspire.service.TransportException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
-import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -36,6 +35,19 @@ import javax.inject.Inject
  * **3. 收尾卡不含任何 AI 总结**
  * 只有「你说过的话」+「成文 / 先留着」两个动作。
  * 让 AI 在这里总结等于撤销了整个追问阶段建立的信任。
+ *
+ * ## Round 的语义（曾经写错过，务必看清）
+ *
+ * 一个 [Round] = **一个问题 + 可选的一个回答**。
+ *
+ * - AI 问完 → `rounds + Round(问题, null)`（未答）
+ * - 用户回答 → **把 answer 填进最后一轮**（不是新增一轮）
+ * - AI 再问 → `rounds + Round(新问题, null)`
+ *
+ * 之前这里是「用户回答时新增一轮空问题的 Round，然后在下一问到达时
+ * `dropLast(1)` 把那一轮删掉」——于是**每答一次就把刚说的那句话丢掉**。
+ * 表现是：折叠区永远空白、进度点永远亮不起来、成文时素材为 0。
+ * 这一条由 `DeepeningFlowTest` 守着。
  */
 @HiltViewModel
 class DeepeningViewModel @Inject constructor(
@@ -54,20 +66,19 @@ class DeepeningViewModel @Inject constructor(
      * **第一次进来就自动发起追问。**
      *
      * 之前只加载数据不发起请求，页面就停在空白状态——
-     * 用户看到的是「说说你的看法」输入框，不知道该输入还是该等 AI 问，
-     * 于是卡住不动（真机实测反馈的问题之一）。
+     * 用户看到的是输入框，不知道该输入还是该等 AI 问，于是卡住不动。
      *
-     * 自动发起之后，用户看到的是 AI 的第一个问题，
-     * 自然就知道「哦，它要问我东西」——意图不用解释。
-     *
-     * 已经聊过几轮的会话则不重复发起，
-     * 否则会浪费一次调用并让历史出现重复的问题。
+     * 已经聊过几轮的会话则不重复发起，否则会浪费一次调用并让历史出现重复的问题。
      */
     fun load(noteId: String) {
         viewModelScope.launch {
             val idea = repo.findIdea(noteId) ?: return@launch
             val deepening = idea.deepening
-            val rounds = deepening?.rounds ?: emptyList()
+            var rounds = deepening?.rounds ?: emptyList()
+
+            // 最后一轮是「空问题」的残渣（旧版本 bug 留下的数据），
+            // 读进来先清掉，否则会在库里越积越多
+            rounds = rounds.dropLastWhile { it.question.isBlank() && !it.answered }
 
             _state.value = DeepeningUiState(
                 noteId = noteId,
@@ -80,28 +91,22 @@ class DeepeningViewModel @Inject constructor(
                 errorMessage = null,
             )
 
-            // 会话已收尾（有文章或用户主动结束）就不再自动问
+            // 会话已收尾（已成文或用户主动结束）就不再自动问
             if (deepening?.finishedAt != null) return@launch
+            if (rounds.count { it.answered } >= _state.value.maxRounds) return@launch
 
-            // 最后一轮已经问出来但用户还没答 → 不重复问，
-            // 直接聚焦输入框让用户回答。
-            //
-            // 这一步之前写错了：条件写成「最后一轮有问题就跳过」，
-            // 结果「深化中」的记录（有历史轮次、未回答）会既不提问、
-            // 也不聚焦，用户看到的就是一个不能动的页面——
-            // 真机实测反馈的「点击 AI 追问卡住」就是这个。
-            val lastAnswered = rounds.lastOrNull()?.answered == true
-            val lastQuestionBlank = rounds.lastOrNull()?.question.isNullOrBlank()
-            if (lastQuestionBlank) {
-                // 最后一轮只有问题没有内容（异常状态），重新问一次
-                askFirstQuestion()
-            } else if (!lastAnswered) {
-                // 正常状态：等用户回答。让输入框自动获得焦点，
-                // 用户落地就能直接打字，不用先点一下输入框
-                _state.value = _state.value.copy(pendingAnswer = true)
-            } else {
-                // 全部答完还没收尾，继续问下一个
-                askFirstQuestion()
+            val last = rounds.lastOrNull()
+            when {
+                // 全新会话 → 问第一个
+                last == null -> askQuestion(rounds)
+
+                // 有问题等着回答 → 不重复问，聚焦输入框
+                !last.answered -> {
+                    _state.value = _state.value.copy(focusTick = 1)
+                }
+
+                // 全部答完还没收尾 → 继续问下一个（带上历史，别丢上下文）
+                else -> askQuestion(rounds)
             }
         }
     }
@@ -113,113 +118,134 @@ class DeepeningViewModel @Inject constructor(
      * 而他甚至不知道是网络问题还是 App 坏了。
      */
     fun retryFirstQuestion() {
+        val current = _state.value
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = false, errorMessage = null)
-            askFirstQuestion()
+            if (current.awaitingAnswer) {
+                // 已经有一个待答的问题，重试不该再问一个——只需重新聚焦
+                _state.value = _state.value.copy(focusTick = current.focusTick + 1)
+            } else {
+                askQuestion(_state.value.rounds)
+            }
         }
     }
 
-    /** 发起第一轮追问。不经过 send()，因为用户此刻还没说话 */
-    private suspend fun askFirstQuestion() {
+    /**
+     * 问下一个问题。
+     *
+     * [history] 是发给模型的上下文：必须带上已经答过的轮次，
+     * 否则模型会从零开始问——用户会觉得自己前面说的白说了。
+     */
+    private suspend fun askQuestion(history: List<Round>) {
         val current = _state.value
         _state.value = current.copy(busy = true, errorMessage = null)
 
         val ctx = DeepeningContext(
             noteId = current.noteId,
             originalNote = current.noteBody,
-            rounds = emptyList(),
-            roundIndex = 0,
+            rounds = flattenForAi(history),
+            roundIndex = history.count { it.answered },
             maxRounds = current.maxRounds,
         )
 
         try {
             ai.streamQuestion(ctx).collect { chunk ->
-                _state.value = _state.value.copy(
-                    streaming = _state.value.streaming + chunk,
-                )
+                _state.value = _state.value.copy(streaming = _state.value.streaming + chunk)
             }
-
-            val text = _state.value.streaming
-            _state.value = _state.value.copy(
-                rounds = if (text.isBlank()) {
-                    _state.value.rounds
-                } else {
-                    _state.value.rounds + Round(question = text, answer = null)
-                },
-                streaming = "",
-                busy = false,
-            )
         } catch (e: Exception) {
             _state.value = _state.value.copy(
                 busy = false,
-                errorMessage = com.hatio.speakinspire.data.remote.ErrorMapper.humanize(
-                    (e as? com.hatio.speakinspire.service.TransportException)?.kind
-                        ?: com.hatio.speakinspire.service.ErrorKind.NETWORK_UNAVAILABLE
-                ),
+                errorMessage = humanize(e),
             )
+            return
         }
+
+        val text = _state.value.streaming
+        val appended = if (text.isBlank()) {
+            _state.value.rounds
+        } else {
+            _state.value.rounds + Round(question = text, answer = null)
+        }
+        _state.value = _state.value.copy(
+            rounds = appended,
+            streaming = "",
+            busy = false,
+            focusTick = if (text.isBlank()) _state.value.focusTick else _state.value.focusTick + 1,
+        )
+        // 只有答过话的会话才落库——否则库里会堆一堆没人搭理的问题
+        if (text.isNotBlank()) persist(current.noteId, appended)
     }
 
     /**
-     * 发给AI，接收流式返回。
+     * 用户发送回答。
      *
-     * 先把用户这句话落到 rounds 里——**进度点在这一刻点亮**。
+     * **回答落在最后一轮上**，然后才去要下一个问题。
+     * 进度点在这一刻点亮，不等 AI 回复。
      */
     fun send(text: String) {
         val userText = text.trim()
         if (userText.isEmpty() || _state.value.busy) return
 
         val current = _state.value
-        val nextRounds = current.rounds + Round(question = current.streaming, answer = userText)
+        if (!current.awaitingAnswer) return
+
+        val nextRounds = current.rounds.dropLast(1) +
+            current.rounds.last().copy(answer = userText)
 
         _state.value = current.copy(
             rounds = nextRounds,
             streaming = "",
             busy = true,
             // 关键：用户发送即点亮，不是等 AI 问完
-            answeredCount = current.answeredCount + 1,
+            answeredCount = nextRounds.count { it.answered },
             errorMessage = null,
         )
 
         streamJob = viewModelScope.launch {
+            // 先落库再请求——网络失败也不该让刚说的话消失
+            persist(current.noteId, nextRounds)
+
             val ctx = DeepeningContext(
                 noteId = current.noteId,
                 originalNote = current.noteBody,
-                // AI 侧只需要对话消息，历史问题由前端维护
                 rounds = flattenForAi(nextRounds),
                 roundIndex = nextRounds.count { it.answered } - 1,
                 maxRounds = current.maxRounds,
             )
-            persist(current.noteId, nextRounds)
 
-            ai.streamQuestion(ctx)
-                .catch { e ->
-                    val kind = (e as? com.hatio.speakinspire.service.TransportException)?.kind
-                        ?: ErrorKind.NETWORK_UNAVAILABLE
-                    _state.value = _state.value.copy(
-                        busy = false,
-                        errorMessage = com.hatio.speakinspire.data.remote.ErrorMapper.humanize(kind),
-                    )
-                }
-                .collect { chunk ->
+            try {
+                ai.streamQuestion(ctx).collect { chunk ->
                     _state.value = _state.value.copy(
                         streaming = _state.value.streaming + chunk,
                     )
                 }
+            } catch (e: Exception) {
+                // 回答已经保留，只是没拿到下一个问题。
+                // 用户点「再试一次」就能接着问，不必重说一遍
+                _state.value = _state.value.copy(
+                    busy = false,
+                    errorMessage = humanize(e),
+                )
+                return@launch
+            }
 
-            // 流结束：把这段 AI 提问固化到最后一轮
-            val finalRounds = if (_state.value.streaming.isNotBlank()) {
-                _state.value.rounds.dropLast(1) +
-                    Round(question = _state.value.streaming, answer = null)
-            } else {
+            val newQuestion = _state.value.streaming
+            val appended = if (newQuestion.isBlank()) {
                 _state.value.rounds
+            } else {
+                _state.value.rounds + Round(question = newQuestion, answer = null)
             }
             _state.value = _state.value.copy(
-                rounds = finalRounds,
+                rounds = appended,
                 streaming = "",
                 busy = false,
+                focusTick = if (newQuestion.isBlank()) {
+                    _state.value.focusTick
+                } else {
+                    _state.value.focusTick + 1
+                },
             )
-            persist(current.noteId, finalRounds)
+            if (newQuestion.isNotBlank()) persist(current.noteId, appended)
         }
     }
 
@@ -227,10 +253,15 @@ class DeepeningViewModel @Inject constructor(
     fun skipTyping() {
         val current = _state.value
         if (current.streaming.isBlank()) return
-        val next = current.rounds.dropLast(1) + Round(question = current.streaming, answer = null)
+        val next = current.rounds + Round(question = current.streaming, answer = null)
         streamJob?.cancel()
         streamJob = null
-        _state.value = current.copy(rounds = next, streaming = "", busy = false)
+        _state.value = current.copy(
+            rounds = next,
+            streaming = "",
+            busy = false,
+            focusTick = current.focusTick + 1,
+        )
         viewModelScope.launch { persist(current.noteId, next) }
     }
 
@@ -244,25 +275,7 @@ class DeepeningViewModel @Inject constructor(
         }
     }
 
-    /** 成文。交给成文阶段处理 */
-    fun compose() {
-        val current = _state.value
-        viewModelScope.launch {
-            val deepening = Deepening(
-                id = UUID.randomUUID().toString(),
-                noteId = current.noteId,
-                rounds = current.rounds,
-                startedAt = System.currentTimeMillis(),
-                finishedAt = System.currentTimeMillis(),
-                estimatedRounds = current.maxRounds,
-            )
-            repo.saveDeepening(deepening)
-            _state.value = _state.value.copy(finished = true, composing = true)
-        }
-    }
-
     private suspend fun persist(noteId: String, rounds: List<Round>, finished: Boolean = false) {
-        val current = _state.value
         if (rounds.none { it.answered }) return
         repo.saveDeepening(
             Deepening(
@@ -271,10 +284,15 @@ class DeepeningViewModel @Inject constructor(
                 rounds = rounds,
                 startedAt = System.currentTimeMillis(),
                 finishedAt = if (finished) System.currentTimeMillis() else null,
-                estimatedRounds = current.maxRounds,
+                estimatedRounds = _state.value.maxRounds,
             )
         )
     }
+
+    private fun humanize(e: Exception): String =
+        ErrorMapper.humanize(
+            (e as? TransportException)?.kind ?: ErrorKind.NETWORK_UNAVAILABLE
+        )
 
     /**
      * 把 Round 列表拍平成 ChatMessage 序列。
@@ -309,13 +327,19 @@ data class DeepeningUiState(
     val composing: Boolean = false,
     val errorMessage: String? = null,
     /**
-     * 有问题在等用户回答，且还没聚焦过输入框。
-     * UI 层用它决定要不要自动弹键盘。
+     * 每次「该用户说话了」就 +1。
+     *
+     * UI 用它触发自动聚焦。用布尔值做不到——从 false 变 true 只触发一次，
+     * 第二个问题到来时值没变，键盘就不会再弹。
      */
-    val pendingAnswer: Boolean = false,
+    val focusTick: Int = 0,
 ) {
     /** 已完成的问答对数 */
     val completedRounds: Int get() = rounds.count { it.answered }
+
+    /** 有一个问题正在等用户回答——决定输入框能不能用 */
+    val awaitingAnswer: Boolean
+        get() = rounds.lastOrNull()?.let { !it.answered && it.question.isNotBlank() } == true
 
     /** 最后一轮之后不再显示新的 AI 气泡（有正在流的也算） */
     val showTypingBubble: Boolean get() = streaming.isNotEmpty()

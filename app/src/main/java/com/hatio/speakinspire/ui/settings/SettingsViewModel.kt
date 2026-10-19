@@ -62,11 +62,23 @@ class SettingsViewModel @Inject constructor(
             model = preset.model,
             addingModel = false,
             thinkingDisabled = preset.thinkingDisabled,
-            // 换服务商时清掉 key，避免把A家的key 发给 B 家
+            // 先清空，避免把 A 家的 key 发到 B 家
             apiKey = "",
             keyAlreadySaved = false,
             testResult = null,
         )
+        // 再把这家**之前存过**的 key 读回来。
+        // 不能一律清空——用户切回用过的服务商时，
+        // 看到空输入框会以为 key 丢了，然后重新贴一遍。
+        viewModelScope.launch {
+            val saved = repo.readKey(providerId).orEmpty()
+            if (_state.value.selectedProvider == providerId) {
+                _state.value = _state.value.copy(
+                    apiKey = saved,
+                    keyAlreadySaved = saved.isNotBlank(),
+                )
+            }
+        }
     }
 
     /**
@@ -83,6 +95,8 @@ class SettingsViewModel @Inject constructor(
                 preset.copy(
                     apiKey = current.apiKey,
                     model = model,
+                    // 保留用户可能改过的地址，别被预置值覆盖
+                    baseUrl = current.baseUrl,
                     thinkingDisabled = current.thinkingDisabled,
                 )
             )
@@ -138,8 +152,9 @@ class SettingsViewModel @Inject constructor(
         _state.value = _state.value.copy(apiKey = v.trim(), testResult = null)
     }
 
-    fun updateThinking(enabled: Boolean) {
-        _state.value = _state.value.copy(thinkingDisabled = enabled)
+    /** [disabled] = 关掉思考模式。字段名叫 thinkingDisabled，别把语义搞反 */
+    fun updateThinking(disabled: Boolean) {
+        _state.value = _state.value.copy(thinkingDisabled = disabled)
     }
 
     /** 用当前输入测试，不落库 */
