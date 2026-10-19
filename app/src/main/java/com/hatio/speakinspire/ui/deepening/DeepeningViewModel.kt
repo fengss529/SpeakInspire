@@ -6,10 +6,12 @@ import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.DeepeningContext
 import com.hatio.speakinspire.service.ErrorKind
+import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.service.TransportException
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -53,6 +55,7 @@ import javax.inject.Inject
 class DeepeningViewModel @Inject constructor(
     private val repo: IdeaRepository,
     private val ai: AiService,
+    private val probeStore: ProbeMethodStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DeepeningUiState())
@@ -89,6 +92,9 @@ class DeepeningViewModel @Inject constructor(
                 answeredCount = rounds.count { it.answered },
                 maxRounds = deepening?.estimatedRounds ?: DEFAULT_MAX_ROUNDS,
                 errorMessage = null,
+                // 每次进来读一次：用户可能在设置里换了问法，
+                // 下次进来就该按新方法问
+                probeMethod = probeStore.current(),
             )
 
             // 会话已收尾（已成文或用户主动结束）就不再自动问
@@ -146,6 +152,7 @@ class DeepeningViewModel @Inject constructor(
             rounds = flattenForAi(history),
             roundIndex = history.count { it.answered },
             maxRounds = current.maxRounds,
+            probeMethod = current.probeMethod,
         )
 
         try {
@@ -170,6 +177,11 @@ class DeepeningViewModel @Inject constructor(
             rounds = appended,
             streaming = "",
             busy = false,
+            // 一句问题都没拿到时，界面不能只是「没反应」。
+            // 最可能的两个原因：网络断了，或者思考模式没关
+            // （模型把话全说在 reasoning 里，正文空白）。
+            // 这里给一句能直接照着做的提示，而不是让用户猜。
+            errorMessage = if (text.isBlank()) EMPTY_QUESTION_HINT else null,
             focusTick = if (text.isBlank()) _state.value.focusTick else _state.value.focusTick + 1,
         )
         // 只有答过话的会话才落库——否则库里会堆一堆没人搭理的问题
@@ -211,6 +223,7 @@ class DeepeningViewModel @Inject constructor(
                 rounds = flattenForAi(nextRounds),
                 roundIndex = nextRounds.count { it.answered } - 1,
                 maxRounds = current.maxRounds,
+                probeMethod = current.probeMethod,
             )
 
             try {
@@ -239,6 +252,7 @@ class DeepeningViewModel @Inject constructor(
                 rounds = appended,
                 streaming = "",
                 busy = false,
+                errorMessage = if (newQuestion.isBlank()) EMPTY_QUESTION_HINT else null,
                 focusTick = if (newQuestion.isBlank()) {
                     _state.value.focusTick
                 } else {
@@ -309,6 +323,10 @@ class DeepeningViewModel @Inject constructor(
 
     companion object {
         const val DEFAULT_MAX_ROUNDS = 5
+
+        /** 模型一个字都没吐出来时的提示。必须可执行，不能只是「出错了」 */
+        const val EMPTY_QUESTION_HINT =
+            "模型这次没返回问题。再试一次；如果一直这样，去设置里确认「关掉思考模式」是勾上的。"
     }
 }
 
@@ -326,6 +344,8 @@ data class DeepeningUiState(
     val finished: Boolean = false,
     val composing: Boolean = false,
     val errorMessage: String? = null,
+    /** 本次会话用的追问方法。进页面时从设置里读一次 */
+    val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
     /**
      * 每次「该用户说话了」就 +1。
      *

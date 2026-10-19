@@ -179,6 +179,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onModel = { svm.updateModel(it) },
                 onApiKey = { svm.updateKey(it) },
                 onThinking = { svm.updateThinking(it) },
+                onSelectProbeMethod = { svm.selectProbeMethod(it) },
                 onTest = { svm.testConnection() },
                 onSave = { svm.save() },
                 onSavedConsumed = { svm.consumeSavedFlag() },

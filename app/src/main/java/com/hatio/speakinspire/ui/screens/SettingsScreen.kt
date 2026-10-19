@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
+import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.ui.settings.SettingsUiState
 import com.hatio.speakinspire.ui.settings.TestResult
 import com.hatio.speakinspire.ui.theme.Spacing
@@ -80,6 +81,8 @@ fun SettingsScreen(
     onModel: (String) -> Unit,
     onApiKey: (String) -> Unit,
     onThinking: (Boolean) -> Unit,
+    /** 选追问方法。立刻生效，不需要点保存 */
+    onSelectProbeMethod: (ProbeMethod) -> Unit,
     onTest: () -> Unit,
     onSave: () -> Unit,
     /** 提示弹完后回调，把 saved 标志清掉 */
@@ -231,6 +234,36 @@ fun SettingsScreen(
                 }
             }
 
+            // ---------- 追问方式 ----------
+            //
+            // 放在模型之后、接口地址之前：先决定「用哪个模型」，
+            // 再决定「怎么问」，最后才是接线细节。
+            //
+            // 换的是提问手法，不是权力边界——四种方法都只能问不能答。
+            // 这一点在设置页里也要说清楚，否则用户会以为切到某种方法
+            // 就能拿到建议。
+            Spacer(Modifier.height(Spacing.xl))
+
+            SectionLabel("用哪种追问方式")
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "只换问法，不换规矩：四种方式都只提问、不给答案。",
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.height(Spacing.s))
+
+            Column(Modifier.selectableGroup()) {
+                ProbeMethod.entries.forEach { method ->
+                    ProbeMethodRow(
+                        method = method,
+                        selected = state.probeMethod == method,
+                        onClick = { onSelectProbeMethod(method) },
+                    )
+                }
+            }
+
             Spacer(Modifier.height(Spacing.xl))
 
             // 自定义才要填地址和模型
@@ -250,8 +283,11 @@ fun SettingsScreen(
                 Spacer(Modifier.height(Spacing.l))
             }
 
-            // MiMo 专属：思考模式
-            if (state.selectedProvider == ProviderConfig.MIMO) {
+            // 思考模式。DeepSeek 也要显示——实测 deepseek-flash
+            // 不显式关掉时只返回推理过程、正文为空，
+            // 表现就是追问一直转圈却一个字都不出。
+            // 之前只给 MiMo 显示，DeepSeek 用户遇到时无从下手。
+            if (state.selectedProvider != ProviderConfig.CUSTOM) {
                 Spacer(Modifier.height(Spacing.l))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(
@@ -261,7 +297,7 @@ fun SettingsScreen(
                     Column(Modifier.padding(start = Spacing.s)) {
                         Text("关掉思考模式", fontSize = 14.sp)
                         Text(
-                            "开着的话每句话前会多等几秒。追问是逐字浮现的，等待感很重。",
+                            "开着的话每句话前会多等几秒。追问迟迟不出字时，先确认这里是打开的。",
                             fontSize = 11.sp,
                             lineHeight = 17.sp,
                             color = MaterialTheme.colorScheme.outline,
@@ -404,6 +440,46 @@ private fun ModelRow(
             Text(
                 modelName,
                 fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+            )
+        }
+    }
+}
+
+/**
+ * 追问方法行。
+ *
+ * [ProbeMethod.bestFor] 是这一行的重点——用户不需要理解
+ * 「苏格拉底式」是什么，他只需要知道「我记的是什么事，该选哪个」。
+ * 只写方法名会让他四个都不敢选。
+ */
+@Composable
+private fun ProbeMethodRow(
+    method: ProbeMethod,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(vertical = Spacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(start = Spacing.s)) {
+            Text(method.label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                method.blurb,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Text(
+                "适合：${method.bestFor}",
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
             )
         }

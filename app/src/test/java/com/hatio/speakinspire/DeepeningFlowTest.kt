@@ -3,10 +3,12 @@ package com.hatio.speakinspire
 import com.hatio.speakinspire.data.local.ArticleEntity
 import com.hatio.speakinspire.data.local.NoteEntity
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.data.repository.InMemoryProbeMethodStore
 import com.hatio.speakinspire.data.model.Angle
 import com.hatio.speakinspire.data.model.OutlineSection
 import com.hatio.speakinspire.data.model.ScriptOutline
 import com.hatio.speakinspire.service.FakeAiService
+import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
 import com.hatio.speakinspire.ui.topic.TopicStep
 import com.hatio.speakinspire.ui.topic.TopicViewModel
@@ -41,12 +43,14 @@ class DeepeningFlowTest {
     private val scriptDao = FakeScriptDao()
     private lateinit var repo: IdeaRepository
     private lateinit var ai: FakeAiService
+    private lateinit var probeStore: InMemoryProbeMethodStore
 
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
         ai = FakeAiService()
+        probeStore = InMemoryProbeMethodStore()
     }
 
     @After
@@ -92,7 +96,7 @@ class DeepeningFlowTest {
         seedNote()
         ai.questionScript = listOf("当时你准备了多久？", "卡住的瞬间你脑子里在想什么？")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
 
         val s = vm.state.value
@@ -103,11 +107,62 @@ class DeepeningFlowTest {
     }
 
     @Test
+    fun `第一问的上下文里必须带着用户原始记录`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("当时你准备了多久？")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        val ctx = ai.captured.last { it.stage == FakeAiService.Stage.PROBE }.context
+        assertEquals(
+            "原始记录必须从笔记一路传到请求上下文",
+            "我明明准备过，但张嘴就卡住",
+            ctx?.originalNote,
+        )
+    }
+
+    @Test
+    fun `设置里选的追问方法会传进请求`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("有人会说你就是没准备充分，你怎么回应？")
+        probeStore.select(ProbeMethod.DEVILS_ADVOCATE)
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        assertEquals(
+            "设置里选了反方质询，请求里就必须是反方质询",
+            ProbeMethod.DEVILS_ADVOCATE,
+            vm.state.value.probeMethod,
+        )
+        val ctx = ai.captured.last { it.stage == FakeAiService.Stage.PROBE }.context
+        assertEquals(ProbeMethod.DEVILS_ADVOCATE, ctx?.probeMethod)
+    }
+
+    @Test
+    fun `换方法后重新进入页面会读到新方法`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("第一次的问题", "第二次的问题")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        assertEquals(ProbeMethod.DEFAULT, vm.state.value.probeMethod)
+
+        // 模拟用户去设置里换了问法，再回到这个话题
+        probeStore.select(ProbeMethod.STAR)
+        val vm2 = DeepeningViewModel(repo, ai, probeStore)
+        vm2.load("n1")
+
+        assertEquals("重新进来应吃到新设置", ProbeMethod.STAR, vm2.state.value.probeMethod)
+    }
+
+    @Test
     fun `用户回答后历史里必须留下这句回答`() = runTest {
         seedNote()
         ai.questionScript = listOf("当时你准备了多久？", "卡住的瞬间你脑子里在想什么？")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         vm.send("我准备了整整一周")
 
@@ -128,7 +183,7 @@ class DeepeningFlowTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二", "问题三")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         vm.send("回答一")
         vm.send("回答二")
@@ -146,7 +201,7 @@ class DeepeningFlowTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         vm.send("回答一")
 
@@ -161,7 +216,7 @@ class DeepeningFlowTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二", "问题三", "问题四", "问题五")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         repeat(5) { vm.send("回答${it + 1}") }
 
@@ -175,12 +230,12 @@ class DeepeningFlowTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二", "问题三")
 
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         vm.send("回答一")
 
         // 新建一个 VM，模拟离开页面再进来
-        val vm2 = DeepeningViewModel(repo, ai)
+        val vm2 = DeepeningViewModel(repo, ai, probeStore)
         vm2.load("n1")
 
         val s = vm2.state.value
@@ -195,7 +250,7 @@ class DeepeningFlowTest {
     fun `网络失败时回答仍被保留`() = runTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二")
-        val vm = DeepeningViewModel(repo, ai)
+        val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
 
         ai.failProbe = true

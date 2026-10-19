@@ -149,6 +149,14 @@ data class DeepeningContext(
     val maxRounds: Int,
     /** 标签，作为轻量上下文，不参与决策 */
     val tags: List<String> = emptyList(),
+    /**
+     * 这一轮用哪种追问方法。
+     *
+     * 放进上下文而不是由服务实现自己读配置，是为了让
+     * 「ViewModel 选了哪种方法 → 实际发出去的是哪种」
+     * 能被链路测试直接断言，不依赖 Android 存储。
+     */
+    val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
 ) {
     /** 已经答完的轮数 */
     val answeredRounds: Int get() = rounds.count { it.isUser }

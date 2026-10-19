@@ -36,17 +36,53 @@ class RealAiService(
     private val configProvider: () -> ProviderConfig,
 ) : AiService {
 
-    /** 追问：流式逐字。打字机效果就靠这个 */
+    /**
+     * 追问：流式逐字。打字机效果就靠这个。
+     *
+     * ## 第一问的请求里必须带原始记录
+     *
+     * 曾经这里只发 `context.rounds`。第一问时 rounds 是空的，
+     * 请求体里就只剩一条 system message——模型手里没有任何素材，
+     * 于是「提不出问题来」，页面停在空白。
+     *
+     * 拼消息时把 [DeepeningContext.originalNote] 固定成第一条 user 消息，
+     * 后续每轮都带着它。多花几十个 token，换来的是模型始终知道
+     * 「用户最初说的到底是什么」——追问跑到第四轮的时候，
+     * 这个锚点尤其重要。
+     */
     override fun streamQuestion(context: DeepeningContext): Flow<String> {
         val cfg = configProvider()
         val body = RequestBuilder.probe(
             cfg,
-            Prompts.PROBE_SYSTEM_PROMPT,
-            context.rounds,
+            Prompts.probeSystem(
+                method = context.probeMethod,
+                roundIndex = context.roundIndex,
+                maxRounds = context.maxRounds,
+            ),
+            probeMessages(context),
         )
         return transport.stream(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
             .transformLines()
             .flowOn(Dispatchers.IO)
+    }
+
+    /**
+     * 追问的消息序列：原始记录 + 已发生的问答。
+     *
+     * 顺序是 user(想法) → assistant(问题) → user(回答) → ……
+     * 这是标准的多轮对话形状，模型不会弄混谁说了什么。
+     */
+    private fun probeMessages(context: DeepeningContext): List<ChatMessage> {
+        val note = context.originalNote.trim()
+        val opening = if (note.isEmpty()) {
+            "我想聊一件事，但还没想清楚。"
+        } else {
+            "我随手记下的想法：\n$note"
+        }
+        return buildList {
+            add(ChatMessage.user(opening))
+            addAll(context.rounds)
+        }
     }
 
     /** 成文：一次性 JSON 输出。素材不足必须拒稿 */

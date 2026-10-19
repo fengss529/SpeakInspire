@@ -13,9 +13,12 @@ import com.hatio.speakinspire.data.remote.HttpTransport
 import com.hatio.speakinspire.data.remote.OkHttpTransport
 import com.hatio.speakinspire.data.remote.Providers
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.repository.ProviderRepository
+import com.hatio.speakinspire.data.repository.SharedPrefsProbeMethodStore
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.RealAiService
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -63,11 +66,25 @@ object DatabaseModule {
     ): IdeaRepository = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
 }
 
+/**
+ * 追问方法绑定。
+ *
+ * 接口与实现分开，是为了让链路测试能在没有 Android Context 的 JVM 里
+ * 塞一个内存实现，从而验证「设置里选了哪种方法 → 请求里就是哪种」。
+ */
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class ProbeModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindProbeMethodStore(impl: SharedPrefsProbeMethodStore): ProbeMethodStore
+}
+
 /** 网络模块 */
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
-
     @Provides
     @Singleton
     fun provideOkHttpClient(): OkHttpClient = OkHttpTransport.defaultClient()

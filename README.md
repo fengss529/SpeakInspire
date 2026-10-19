@@ -3,11 +3,11 @@
 提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 成文章 → 转选题 → 拍摄**。
 
 ```bash
-gradlew.bat test                # 跑全部 285 条单元测试
+gradlew.bat test                # 跑全部 308 条单元测试
 gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 ```
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.7**（versionCode 7）。
+包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8**（versionCode 8）。
 
 ---
 
@@ -19,7 +19,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | 服务层 | ✅ | `RealAiService` 已接真实模型（DeepSeek / MiMo，OpenAI 兼容） |
 | 领域层 | ✅ | 8 状态派生 + 手势判定，纯函数 |
 | UI | ✅ | 五格导航 + 记录详情 + 编辑 + 追问 + 成文 + 转选题 + 设置 |
-| 测试 | ✅ | **285 条，0 失败**（含追问→成文→选题的链路测试） |
+| 测试 | ✅ | **308 条，0 失败**（含追问→成文→选题的链路测试） |
 | 未开始 | ⬜ | 拍摄后反馈（P2 的核心风险点） |
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（来源视图）→ 转选题（骨架）→ 标记已拍摄。
@@ -51,7 +51,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 |---|---:|---|
 | `MappersTest` | 34 | Entity ↔ Model + JSON 编解码 |
 | `IdeaRepositoryTest` | 27 | 聚合、状态派生、写操作返回值 |
-| `RealAiServiceTest` | 19 | 真实响应解析、拒稿、错误归因 |
+| `RealAiServiceTest` | 24 | 真实响应解析、拒稿、错误归因、**第一问带原始记录** |
 | `DeepeningUiStateTest` | 18 | 进度点 / 折叠摘要 / 收尾卡 |
 | `TopicUiStateTest` | 18 | 角度选择、骨架展示 |
 | `ComposeUiStateTest` | 17 | 来源视图、拒稿路径 |
@@ -61,13 +61,14 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `RequestBuilderTest` | 15 | 请求体拼装、thinking 参数 |
 | `ErrorMapperTest` | 12 | 错误归因 |
 | `SettingsUiStateTest` | 10 | 设置页状态 |
-| **`DeepeningFlowTest`** | **9** | **追问→成文→选题的真实链路** |
+| **`DeepeningFlowTest`** | **12** | **追问→成文→选题的真实链路** |
+| `ProbeMethodTest` | 15 | **四种追问方法：彼此不同、边界相同** |
 | `ModelOutputParserTest` | 8 | 成文 / 角度 / 骨架解析 |
 | `GestureJudgeTest` | 7 | 右滑标记 / 左滑搁置 |
 | `ResponseParserTest` / `SseParserTest` | 12 | 响应与帧解析 |
 | `EditNoteTest` | 5 | 编辑写库 |
 | `AiServiceContractTest` / `ComposeResultTest` | 7 | 三方法必须分开 |
-| **合计** | **285** | **0 失败** |
+| **合计** | **308** | **0 失败** |
 
 ### 测试的盲区（踩过）
 
@@ -114,6 +115,50 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 - **文章 id 必须是 `a_$noteId`**（新文章）或库里已有 id；选题的 `articleId` 必须指向它。
   这两处对不上，表现就是「存了选题但选题 tab 里没有」
 - API Key **不进 Room**，只在 Tink 加密的 SharedPreferences
+
+## 追问的四种方法（V0.8）
+
+追问不是一个动作，是一类动作。同样逼用户想清楚，「依据是什么」和
+「当时具体做了什么」会把人带到完全不同的地方。所以 `ProbeMethod` 给了四种：
+
+| 方法 | 把用户往哪带 | 适合什么 |
+|---|---|---|
+| 苏格拉底式（默认） | 从含糊到具体 | 有观点但说不出理由 |
+| 连续追问为什么 | 从现象到根因 | 复盘一件事为什么没做成 |
+| 反方质询 | 从自说到自辩 | 判断、主张、是非题 |
+| 还原具体场景 | 从概括到细节 | 经历、故事、具体的一次 |
+
+**关键设计：换手法，不换边界。**
+
+`Prompts.probeSystem(method)` 的结构是「共享禁区 + 差异化手法」，
+四种方法不是四份独立全文，只替换 `ProbeMethod.instruction`。
+禁区（不给结论/建议/替代方案）压根不在方法里写，所以加第五种方法也不可能漏掉它。
+
+`ProbeMethodTest.禁区段落不因方法而变` 逐字比较四种方法的禁区段——
+有人给某种方法写「可以适当给点提示」，这条立刻红。
+
+选择存在普通 SharedPreferences（不含敏感信息），与 `ProviderConfig` 分开：
+那是「发给哪家模型」，这是「用什么方式问」。混在一起的话，换服务商会把问法也换掉。
+
+---
+
+## 追问的第一问为什么问不出来（V0.8 修）
+
+`RealAiService.streamQuestion` 曾经只发 `context.rounds`。
+第一问时 rounds 是空的，请求体里只剩一条 system message——
+**模型手里没有任何素材**，于是「提不出问题来」，页面停在空白。
+
+现在 `probeMessages()` 把 `originalNote` 固定成第一条 user 消息，
+后续每轮都带着它。多花几十 token，换来的是第四轮时模型仍知道
+「用户最初说的到底是什么」。
+
+`RealAiServiceTest.第一问必须把原始记录发给模型` 守着这条。
+**这一条做过反向验证**：把修复临时回退，测试立刻红，恢复后绿。
+
+配套：模型一个字都没吐出来时，`DeepeningViewModel` 会给一句可执行提示
+（「去设置里确认『关掉思考模式』是勾上的」），而不是让页面空着。
+
+---
 
 ## 追问的 Round 语义（曾写错，务必看清）
 

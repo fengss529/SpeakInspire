@@ -14,6 +14,7 @@ import com.hatio.speakinspire.data.remote.SseParser
 import com.hatio.speakinspire.service.ConnectionResult
 import com.hatio.speakinspire.service.DeepeningContext
 import com.hatio.speakinspire.service.ErrorKind
+import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.service.RealAiService
 import com.hatio.speakinspire.service.TransportException
 import com.hatio.speakinspire.service.extractField
@@ -390,6 +391,75 @@ class RealAiServiceTest {
         // 关键：追问必须用 PROBE prompt 而不是成文的
         assertTrue(t.lastBody.contains("不给结论"))
         assertFalse(t.lastBody.contains("允许补充论证"))
+    }
+
+    @Test
+    fun `第一问必须把原始记录发给模型`() = runBlocking {
+        // 曾经这里只发 rounds。第一问时 rounds 是空的，
+        // 请求体里只剩一条 system，模型没有任何素材——
+        // 真机表现就是「AI 追问提不出问题来」。
+        val t = FakeTransport()
+        t.sseLines = listOf("data: {\"delta\":{\"content\":\"问题\"}}")
+        service(t).streamQuestion(ctx(rounds = emptyList())).toList()
+
+        assertTrue(
+            "第一问的请求里必须有用户原始记录：${t.lastBody.take(200)}",
+            t.lastBody.contains("原始内容"),
+        )
+        assertTrue(
+            "不能只剩一条 system 消息",
+            t.lastBody.contains("\"role\":\"user\""),
+        )
+    }
+
+    @Test
+    fun `后续轮次仍然带着原始记录`() = runBlocking {
+        // 追问跑到第三轮时，模型更需要那个锚点，
+        // 否则它会跟着最后一句话越问越偏
+        val t = FakeTransport()
+        t.sseLines = listOf("data: {\"delta\":{\"content\":\"问题\"}}")
+        service(t).streamQuestion(
+            ctx(
+                rounds = listOf(
+                    ChatMessage.ai("当时发生了什么？"),
+                    ChatMessage.user("讲到第二页就卡住了"),
+                )
+            )
+        ).toList()
+        assertTrue(t.lastBody.contains("原始内容"))
+        assertTrue(t.lastBody.contains("讲到第二页就卡住了"))
+    }
+
+    @Test
+    fun `追问会带上所选的方法`() = runBlocking {
+        val t = FakeTransport()
+        t.sseLines = listOf("data: {\"delta\":{\"content\":\"问题\"}}")
+        val context = DeepeningContext(
+            noteId = "n1",
+            originalNote = "原始内容",
+            rounds = emptyList(),
+            roundIndex = 0,
+            maxRounds = 5,
+            probeMethod = ProbeMethod.FIVE_WHYS,
+        )
+        service(t).streamQuestion(context).toList()
+
+        assertTrue(
+            "请求里必须是选中的那种问法",
+            t.lastBody.contains("连续问「为什么」"),
+        )
+        assertFalse(
+            "不能同时又带着另一种方法的手法",
+            t.lastBody.contains("苏格拉底式追问"),
+        )
+    }
+
+    @Test
+    fun `默认使用苏格拉底式`() = runBlocking {
+        val t = FakeTransport()
+        t.sseLines = listOf("data: {\"delta\":{\"content\":\"问题\"}}")
+        service(t).streamQuestion(ctx()).toList()
+        assertTrue(t.lastBody.contains("苏格拉底式追问"))
     }
 
     @Test

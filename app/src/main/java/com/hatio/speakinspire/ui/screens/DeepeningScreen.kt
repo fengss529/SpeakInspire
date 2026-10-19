@@ -133,10 +133,23 @@ fun DeepeningScreen(
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                         )
-                        ProgressDots(
-                            lit = state.answeredCount,
-                            total = state.maxRounds,
-                        )
+                        // 进度点旁边标一句问法。
+                        //
+                        // 用户在设置里换了方法，回到这里如果毫无变化，
+                        // 他会怀疑「是不是没生效」。一行小字就能回答这个问题，
+                        // 也不占纵向空间——追问页的高度很紧。
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ProgressDots(
+                                lit = state.answeredCount,
+                                total = state.maxRounds,
+                            )
+                            Spacer(Modifier.width(Spacing.s))
+                            Text(
+                                text = state.probeMethod.label,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
                     }
                 },
                 actions = {

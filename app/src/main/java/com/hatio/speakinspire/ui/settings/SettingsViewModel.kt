@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
+import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.repository.ProviderRepository
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.ConnectionResult
+import com.hatio.speakinspire.service.ProbeMethod
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +31,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val repo: ProviderRepository,
     private val aiService: AiService,
+    private val probeStore: ProbeMethodStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -50,8 +53,21 @@ class SettingsViewModel @Inject constructor(
                 apiKey = savedKey,
                 thinkingDisabled = cfg.thinkingDisabled,
                 keyAlreadySaved = savedKey.isNotBlank(),
+                probeMethod = probeStore.current(),
             )
         }
+    }
+
+    /**
+     * 换追问方法。
+     *
+     * **立刻落盘，不等「保存」按钮**——它跟 API Key 不是一类东西：
+     * key 需要一个确认动作，问法是随手试的，用户切过去就该生效。
+     * 让他为了试试另一种问法先去点保存，是在给一个无风险操作加摩擦。
+     */
+    fun selectProbeMethod(method: ProbeMethod) {
+        probeStore.select(method)
+        _state.value = _state.value.copy(probeMethod = method)
     }
 
     fun selectProvider(providerId: String) {
@@ -222,6 +238,8 @@ data class SettingsUiState(
     val testResult: TestResult? = null,
     val saved: Boolean = false,
     val saveError: String? = null,
+    /** 追问方法。与服务商无关，单独存在偏好里 */
+    val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
 ) {
     fun toConfig() = ProviderConfig(
         providerId = selectedProvider,
