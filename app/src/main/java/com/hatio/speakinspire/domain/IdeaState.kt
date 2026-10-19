@@ -86,10 +86,20 @@ object IdeaStateDeriver {
         }
     }
 
-    /** 待深化列表用——给「深化」tab 排序，越久没碰的越靠前 */
-    fun deepeningQueue(views: List<IdeaView>): List<IdeaView> =
-        views.filter { derive(it) == IdeaState.WAIT }
-            .sortedBy { it.note.createdAt }
+    /**
+     * 「记录」tab 用——**全部记录，按时间倒序**。
+     *
+     * 关键：这里不能用 deepeningQueue（只显示 WAIT 状态）。
+     *
+     * 之前那样做的后果是：一旦深化完或成文了，这条就从记录列表消失——
+     * 用户会以为记录丢了。
+     *
+     * **记录 tab 是「我记下过的东西」，不应该是流水线的一环。**
+     * 一条想法从记下到拍完，状态一直在变，但「我记过它」这件事不该变。
+     * 已深化的那些，在思考 tab 和选题 tab 里能看到，不在这里重复。
+     */
+    fun recordTimeline(views: List<IdeaView>): List<IdeaView> =
+        views.sortedByDescending { it.note.createdAt }
 
     /** 思考库用——适合拍的排前面，「先留着」沉底，同组按成稿时间倒序 */
     fun libraryOrder(views: List<IdeaView>): List<IdeaView> =

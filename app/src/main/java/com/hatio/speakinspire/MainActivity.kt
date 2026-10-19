@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.activity.compose.BackHandler
+import com.hatio.speakinspire.ui.detail.NoteDetailViewModel
+import com.hatio.speakinspire.ui.screens.NoteDetailScreen
+import com.hatio.speakinspire.ui.detail.EditNoteViewModel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,10 +65,36 @@ class MainActivity : ComponentActivity() {
 private sealed interface Route {
     data object Home : Route
     data object NewNote : Route
-    data class Deepening(val noteId: String) : Route
     data object Settings : Route
+
+    /** 记录条详情——点开记录条先进这里 */
+    data class Detail(val noteId: String) : Route
+
+    /** 编辑记录。复用新建页的布局，带 noteId 表示改已有 */
+    data class Edit(val noteId: String) : Route
+
+    data class Deepening(val noteId: String) : Route
     data class Compose(val noteId: String) : Route
     data class Convert(val noteId: String) : Route
+
+    /**
+     * 从哪来。
+     *
+     * Android 的返回手势（边缘左滑）走的是「上一层」语义，
+     * 所以每个页面必须知道该退回哪——不能一律退回首页，
+     * 那会让用户从成文页一路左滑到首页，而不是回到追问页。
+     */
+    val parent: Route?
+        get() = when (this) {
+            Home, NewNote -> null
+            Settings -> Home
+            // 每个带 noteId 的分支里 this 就是该实例，直接取 noteId
+            is Detail -> Home
+            is Edit -> Detail(noteId)
+            is Deepening -> Detail(noteId)
+            is Compose -> Deepening(noteId)
+            is Convert -> Compose(noteId)
+        }
 }
 
 @Composable
@@ -79,6 +109,13 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
         vm.markShot(id) { onOk() }
     }
 
+    // Android 的边缘左滑与系统返回键走同一条路径。
+    // 不声明的话，系统会认为「这是根页面」，
+    // 左滑直接把 Activity 关掉——用户说「左滑退出应用」就是这个。
+    BackHandler(enabled = route != Route.Home) {
+        route = route.parent ?: Route.Home
+    }
+
     when (val r = route) {
         Route.Home -> Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
@@ -86,7 +123,10 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 when (current) {
                     MainTab.RECORD -> RecordScreen(
                         ideas = state.record,
-                        onOpen = { id -> route = Route.Deepening(id) },
+                        // 先看详情再决定做什么。
+                        // 之前直接进追问页，用户看不到自己记了什么，
+                        // 也不知道该输入还是该等 AI 问。
+                        onOpen = { id -> route = Route.Detail(id) },
                         onSettings = { route = Route.Settings },
                     )
                     MainTab.THINK -> ThinkScreen(
@@ -114,24 +154,59 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 current = tab,
                 onSelect = { tab = it },
                 onCreate = { route = Route.NewNote },
-                recordBadge = state.recordBadge,
-                topicBadge = state.topicBadge,
             )
         }
 
-Route.Settings -> {
+        Route.Settings -> {
             val svm: SettingsViewModel = hiltViewModel()
             val sstate by svm.state.collectAsStateWithLifecycle()
             SettingsScreen(
                 state = sstate,
-                onBack = { route = Route.Home },
+                onBack = { route = r.parent ?: Route.Home },
                 onSelectProvider = { svm.selectProvider(it) },
+                onSelectModel = { svm.selectModel(it) },
                 onBaseUrl = { svm.updateBaseUrl(it) },
                 onModel = { svm.updateModel(it) },
                 onApiKey = { svm.updateKey(it) },
                 onThinking = { svm.updateThinking(it) },
                 onTest = { svm.testConnection() },
                 onSave = { svm.save() },
+                onAddModel = { svm.addModel() },
+            )
+        }
+
+        is Route.Detail -> {
+            val nvm: NoteDetailViewModel = hiltViewModel(key = "detail_${r.noteId}")
+            val nstate by nvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) { nvm.load(r.noteId) }
+            NoteDetailScreen(
+                title = nstate.title,
+                body = nstate.body,
+                createdLabel = nstate.createdLabel,
+                rounds = nstate.rounds,
+                hasArticle = nstate.hasArticle,
+                onBack = { route = r.parent ?: Route.Home },
+                onEdit = { route = Route.Edit(r.noteId) },
+                onDeepen = { route = Route.Deepening(r.noteId) },
+                onViewArticle = { route = Route.Compose(r.noteId) },
+            )
+        }
+
+        is Route.Edit -> {
+            val evm: EditNoteViewModel = hiltViewModel(key = "edit_${r.noteId}")
+            val estate by evm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) { evm.load(r.noteId) }
+            NewNoteScreen(
+                initialTitle = estate.title,
+                initialBody = estate.body,
+                saving = estate.saving,
+                onSave = { title, body, done ->
+                    evm.save(title, body) {
+                        done()
+                        route = Route.Detail(r.noteId)
+                    }
+                },
+                onBack = { route = r.parent ?: Route.Home },
             )
         }
 
@@ -141,7 +216,7 @@ Route.Settings -> {
             LaunchedEffect(r.noteId) { tvm.load(r.noteId) }
             ConvertTopicScreen(
                 state = tstate,
-                onBack = { route = Route.Home },
+                onBack = { route = r.parent ?: Route.Home },
                 onDerive = { tvm.deriveAngles(tstate.articleTitle, emptyList()) },
                 onChooseAngle = { tvm.chooseAngle(it) },
                 onBackToAngles = { tvm.back() },
@@ -161,7 +236,7 @@ Route.Settings -> {
             }
             ComposeScreen(
                 state = cstate,
-                onBack = { route = Route.Home },
+                onBack = { route = r.parent ?: Route.Home },
                 onRetry = { cvm.compose() },
                 onToggleSource = { cvm.toggleSourceMode() },
                 onSave = {
@@ -178,7 +253,7 @@ Route.Settings -> {
             LaunchedEffect(r.noteId) { dvm.load(r.noteId) }
             DeepeningScreen(
                 state = dstate,
-                onBack = { route = Route.Home },
+                onBack = { route = r.parent ?: Route.Home },
                 onSend = { text -> dvm.send(text) },
                 onSkip = { dvm.skipTyping() },
                 onFinishEarly = { dvm.finishEarly() },
@@ -190,7 +265,7 @@ Route.Settings -> {
             onSave = { title, body, done ->
                 vm.createNote(title, body) { done() }
             },
-            onBack = { route = Route.Home },
+            onBack = { route = r.parent ?: Route.Home },
         )
     }
 }

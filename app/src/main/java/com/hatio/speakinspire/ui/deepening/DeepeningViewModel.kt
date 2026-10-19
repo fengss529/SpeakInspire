@@ -48,21 +48,84 @@ class DeepeningViewModel @Inject constructor(
 
     private var streamJob: Job? = null
 
-    /** 加载已有会话（从列表点进来时） */
+    /**
+     * 进入追问页。
+     *
+     * **第一次进来就自动发起追问。**
+     *
+     * 之前只加载数据不发起请求，页面就停在空白状态——
+     * 用户看到的是「说说你的看法」输入框，不知道该输入还是该等 AI 问，
+     * 于是卡住不动（真机实测反馈的问题之一）。
+     *
+     * 自动发起之后，用户看到的是 AI 的第一个问题，
+     * 自然就知道「哦，它要问我东西」——意图不用解释。
+     *
+     * 已经聊过几轮的会话则不重复发起，
+     * 否则会浪费一次调用并让历史出现重复的问题。
+     */
     fun load(noteId: String) {
         viewModelScope.launch {
             val idea = repo.findIdea(noteId) ?: return@launch
             val deepening = idea.deepening
+            val rounds = deepening?.rounds ?: emptyList()
+
             _state.value = DeepeningUiState(
                 noteId = noteId,
                 noteTitle = idea.note.title,
                 noteBody = idea.note.body,
-                rounds = deepening?.rounds ?: emptyList(),
-                // 已有会话若已收尾，就不再显示输入栏
+                rounds = rounds,
                 finished = deepening?.finishedAt != null,
-                answeredCount = deepening?.rounds?.count { it.answered } ?: 0,
+                answeredCount = rounds.count { it.answered },
                 maxRounds = deepening?.estimatedRounds ?: DEFAULT_MAX_ROUNDS,
                 errorMessage = null,
+            )
+
+            // 全新会话 → 立刻问第一个问题
+            val needsFirstQuestion = rounds.isEmpty() ||
+                rounds.lastOrNull()?.question.isNullOrBlank()
+            if (needsFirstQuestion && deepening?.finishedAt == null) {
+                askFirstQuestion()
+            }
+        }
+    }
+
+    /** 发起第一轮追问。不经过 send()，因为用户此刻还没说话 */
+    private suspend fun askFirstQuestion() {
+        val current = _state.value
+        _state.value = current.copy(busy = true, errorMessage = null)
+
+        val ctx = DeepeningContext(
+            noteId = current.noteId,
+            originalNote = current.noteBody,
+            rounds = emptyList(),
+            roundIndex = 0,
+            maxRounds = current.maxRounds,
+        )
+
+        try {
+            ai.streamQuestion(ctx).collect { chunk ->
+                _state.value = _state.value.copy(
+                    streaming = _state.value.streaming + chunk,
+                )
+            }
+
+            val text = _state.value.streaming
+            _state.value = _state.value.copy(
+                rounds = if (text.isBlank()) {
+                    _state.value.rounds
+                } else {
+                    _state.value.rounds + Round(question = text, answer = null)
+                },
+                streaming = "",
+                busy = false,
+            )
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(
+                busy = false,
+                errorMessage = com.hatio.speakinspire.data.remote.ErrorMapper.humanize(
+                    (e as? com.hatio.speakinspire.service.TransportException)?.kind
+                        ?: com.hatio.speakinspire.service.ErrorKind.NETWORK_UNAVAILABLE
+                ),
             )
         }
     }

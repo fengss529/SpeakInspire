@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -67,6 +68,8 @@ fun SettingsScreen(
     state: SettingsUiState,
     onBack: () -> Unit,
     onSelectProvider: (String) -> Unit,
+    onSelectModel: (String) -> Unit,
+    onAddModel: () -> Unit,
     onBaseUrl: (String) -> Unit,
     onModel: (String) -> Unit,
     onApiKey: (String) -> Unit,
@@ -152,6 +155,40 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.outline,
             )
 
+            // 候选模型。让用户手动切换，而不是替他做决定
+            if (state.modelChoices.isNotEmpty()) {
+                Spacer(Modifier.height(Spacing.xl))
+
+                SectionLabel("用哪个模型")
+                Spacer(Modifier.height(Spacing.s))
+
+                state.modelChoices.forEach { choice ->
+                    ModelRow(
+                        label = choice.label,
+                        note = choice.note,
+                        modelName = choice.model,
+                        selected = state.model == choice.model,
+                        onClick = { onSelectModel(choice.model) },
+                    )
+                }
+
+                // 服务商上了列表里没有的新模型时，明确显示当前用的哪个
+                if (state.isCustomModelName) {
+                    Spacer(Modifier.height(Spacing.xs))
+                    Text(
+                        text = "当前用的是 ${state.model}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+
+                TextButton(onClick = onAddModel) {
+                    Text("填其他模型名", fontSize = 12.sp)
+                }
+            }
+
+            Spacer(Modifier.height(Spacing.xl))
+
             // 自定义才要填地址和模型
             if (state.needsManualInput) {
                 Spacer(Modifier.height(Spacing.xl))
@@ -234,14 +271,25 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(Spacing.xxl))
 
-            // 版权。放在设置页最底部——这是它该在的位置，
-            // 不需要占据首屏，也不需要单独的「关于」页
-            Text(
-                text = stringResource(R.string.app_copyright),
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // 版本号 + 版权放在页脚。
+            // 版本号是必要的——用户报 bug 时能说清是哪个版本，
+            // 否则只能靠猜「是不是最新版」。
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = stringResource(R.string.version_label),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.app_copyright),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
 
             Spacer(Modifier.height(Spacing.m))
         }
@@ -271,6 +319,48 @@ private fun ProviderRow(
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.outline,
+            )
+        }
+    }
+}
+
+/**
+ * 候选模型行。
+ *
+ * [note] 写的是「什么时候该选它」而不是参数说明——
+ * 用户不需要知道 reasoner 是什么，需要知道它会变慢。
+ */
+@Composable
+private fun ModelRow(
+    label: String,
+    note: String,
+    modelName: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(vertical = Spacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(start = Spacing.s)) {
+            Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            if (note.isNotBlank()) {
+                Text(
+                    note,
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+            Text(
+                modelName,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
             )
         }
     }

@@ -53,17 +53,25 @@ import com.hatio.speakinspire.ui.theme.Spacing
 fun NewNoteScreen(
     onSave: (String, String, () -> Unit) -> Unit,
     onBack: () -> Unit,
+    /** 编辑已有记录时的初始内容。null 表示新建 */
+    initialTitle: String = "",
+    initialBody: String = "",
+    saving: Boolean = false,
 ) {
-    var title by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf(initialTitle) }
+    var body by remember { mutableStateOf(initialBody) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(Unit) {
-        focus.requestFocus()
+    // 编辑时不自动弹键盘——用户已经看得到内容了，
+    // 直接把光标弹出来反而打断「先看看改哪」
+    LaunchedEffect(initialTitle, initialBody) {
+        if (initialTitle.isEmpty() && initialBody.isEmpty()) {
+            focus.requestFocus()
+        }
     }
 
-    val canSave = title.isNotBlank() || body.isNotBlank()
+    val canSave = !saving && (title.isNotBlank() || body.isNotBlank())
 
     Scaffold(
         topBar = {
@@ -75,7 +83,7 @@ fun NewNoteScreen(
                 },
                 title = {
                     Text(
-                        text = "记一下",
+                        text = if (initialTitle.isEmpty() && initialBody.isEmpty()) "记一下" else "编辑记录",
                         style = MaterialTheme.typography.titleMedium,
                     )
                 },

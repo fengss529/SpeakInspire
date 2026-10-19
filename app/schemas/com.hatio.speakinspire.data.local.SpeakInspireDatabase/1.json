@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "252c5eede7030ea88cc62a24640298c2",
+    "identityHash": "90a38c8066c466a698d4baa013fcfbc8",
     "entities": [
       {
         "tableName": "note",
@@ -322,7 +322,7 @@
       },
       {
         "tableName": "provider",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`providerId` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `model` TEXT NOT NULL, `thinkingDisabled` INTEGER NOT NULL, `active` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`providerId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`providerId` TEXT NOT NULL, `baseUrl` TEXT NOT NULL, `model` TEXT NOT NULL, `thinkingDisabled` INTEGER NOT NULL, `active` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`providerId`, `model`))",
         "fields": [
           {
             "fieldPath": "providerId",
@@ -364,7 +364,8 @@
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
-            "providerId"
+            "providerId",
+            "model"
           ]
         },
         "indices": [],
@@ -374,7 +375,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '252c5eede7030ea88cc62a24640298c2')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '90a38c8066c466a698d4baa013fcfbc8')"
     ]
   }
 }

@@ -246,17 +246,28 @@ class IdeaRepositoryTest {
     }
 
     @Test
-    fun `按标签过滤深化队列`() = runBlocking {
+    fun `记录时间线含全部记录且最新在前`() = runBlocking {
         noteDao.seed(
             listOf(
                 seedNote("old", t),
                 seedNote("new", t + 9999),
             )
         )
-        val queue = repo.observeDeepeningQueue().first()
-        assertEquals(2, queue.size)
-        // 越久没碰的越靠前
-        assertEquals("old", queue[0].note.id)
+        val timeline = repo.observeDeepeningQueue().first()
+        assertEquals(2, timeline.size)
+        // 最新的排最前——「我刚记的」应该是最显眼的那条
+        assertEquals("new", timeline[0].note.id)
+    }
+
+    @Test
+    fun `已成文的记录仍在时间线里`() = runBlocking {
+        // bug 6 的回归测试：深化完成、已成文之后，记录不该从列表消失
+        noteDao.seed(listOf(seedNote("n1", t)))
+        articleDao.seed(listOf(seedArticle("n1")))
+
+        val timeline = repo.observeDeepeningQueue().first()
+        assertEquals("已成文的记录也该留着", 1, timeline.size)
+        assertEquals("n1", timeline[0].note.id)
     }
 
     @Test

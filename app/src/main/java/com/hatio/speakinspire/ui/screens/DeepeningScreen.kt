@@ -183,7 +183,14 @@ fun DeepeningScreen(
             if (!state.finished) {
                 InputBar(
                     value = input,
-                    enabled = !state.busy,
+                    // AI 还在出第一个问题时不给输入——
+                    // 那时候用户还没看到问题，输入了也不知道回什么
+                    enabled = !state.busy && state.answeredCount > 0,
+                    placeholder = if (state.answeredCount == 0) {
+                        "AI 正在想第一个问题…"
+                    } else {
+                        "回应它"
+                    },
                     onChange = { input = it },
                     onSend = {
                         onSend(input)
@@ -424,6 +431,7 @@ private fun ErrorHint(message: String) {
 private fun InputBar(
     value: String,
     enabled: Boolean,
+    placeholder: String,
     onChange: (String) -> Unit,
     onSend: () -> Unit,
     canSend: Boolean,
@@ -446,7 +454,7 @@ private fun InputBar(
         ) {
             if (value.isEmpty()) {
                 Text(
-                    text = "说说你的看法",
+                    text = placeholder,
                     fontSize = 15.sp,
                     color = MaterialTheme.colorScheme.outline,
                 )

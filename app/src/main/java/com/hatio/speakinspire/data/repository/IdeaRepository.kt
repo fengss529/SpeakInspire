@@ -1,5 +1,8 @@
 package com.hatio.speakinspire.data.repository
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 import com.hatio.speakinspire.data.local.ArticleDao
 import com.hatio.speakinspire.data.local.DeepeningDao
 import com.hatio.speakinspire.data.local.EntityBundle
@@ -70,7 +73,7 @@ class IdeaRepository(
 
     /** 「深化」tab 用——只含待深化的，按创建时间正序 */
     fun observeDeepeningQueue(): Flow<List<IdeaView>> =
-        observeIdeas().map { IdeaStateDeriver.deepeningQueue(it) }
+        observeIdeas().map { IdeaStateDeriver.recordTimeline(it) }
 
     /** 「思考库」用——适合拍的排前面 */
     fun observeLibrary(): Flow<List<IdeaView>> =
@@ -92,6 +95,18 @@ class IdeaRepository(
             )
         )
     }
+
+    /**
+     * 改已有记录的内容。
+     *
+     * createdAt **不动** —— 改了会让这条记录在时间线上跳到最前面，
+     * 而用户只是想改个字，不是在新建一条。
+     */
+    suspend fun updateNote(id: String, title: String, body: String) =
+        withContext(Dispatchers.IO) {
+            val existing = noteDao.findById(id) ?: return@withContext
+            noteDao.upsert(existing.copy(title = title, body = body))
+        }
 
     suspend fun createNote(
         title: String,

@@ -158,18 +158,44 @@ class IdeaStateDeriverTest {
     // ---------- 排序 ----------
 
     @Test
-    fun `深化队列只含 WAIT 且按时间正序`() {
+    fun `记录时间线含全部状态且按时间倒序`() {
+        // 真机实测反馈的 bug：深化完成后记录从列表消失，
+        // 用户以为记录丢了。记录 tab 是「我记过的东西」的清单，
+        // 不是流水线的一环。
         val old = note().copy(id = "old", createdAt = t)
+        val mid = note().copy(id = "mid", createdAt = t + 5000)
         val new = note().copy(id = "new", createdAt = t + 9999)
-        val ing = note().copy(id = "ing")
+        // 正在深化的那条
+        val ing = note().copy(id = "ing", createdAt = t + 12000)
 
         val views = listOf(
+            IdeaView(old, null, null, emptyList()),
+            IdeaView(mid, deepening(finished = false, rounds = 1), null, emptyList()),
             IdeaView(new, null, null, emptyList()),
             IdeaView(ing, deepening(finished = false, rounds = 1), null, emptyList()),
-            IdeaView(old, null, null, emptyList()),
         )
-        val q = IdeaStateDeriver.deepeningQueue(views)
-        assertEquals(listOf("old", "new"), q.map { it.note.id })
+
+        val timeline = IdeaStateDeriver.recordTimeline(views)
+        assertEquals(
+            "全部状态都要在，最新的排最前",
+            listOf("ing", "new", "mid", "old"),
+            timeline.map { it.note.id },
+        )
+    }
+
+    @Test
+    fun `深化完成的记录不会从时间线消失`() {
+        // 这条就是 bug 6 的回归测试
+        val done = note().copy(id = "done")
+        val withArticle = IdeaView(
+            done,
+            deepening(finished = true, rounds = 2),
+            article(),
+            emptyList(),
+        )
+        val timeline = IdeaStateDeriver.recordTimeline(listOf(withArticle))
+        assertEquals(1, timeline.size)
+        assertEquals("done", timeline[0].note.id)
     }
 
     @Test

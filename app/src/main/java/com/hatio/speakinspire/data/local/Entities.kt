@@ -97,9 +97,20 @@ data class TrashedEntity(
 )
 
 /** 用户自带的服务商配置。key 存EncryptedSharedPreferences，不进 Room。 */
-@Entity(tableName = "provider")
+/**
+ * 一个服务商下的一个模型配置。
+ *
+ * **主键是 providerId + model** —— 这样同一个服务商可以存多个模型，
+ * 用户能在设置里手动切换（flash / pro / 自定义模型名）。
+ *
+ * active 标记当前用的是哪个。同一时刻只应有一个 active。
+ */
+@Entity(
+    tableName = "provider",
+    primaryKeys = ["providerId", "model"],
+)
 data class ProviderEntity(
-    @PrimaryKey val providerId: String,
+    val providerId: String,
     val baseUrl: String,
     val model: String,
     /** MiMo 的 thinking 默认开启需显式关；DeepSeek 则是换模型名控制 */

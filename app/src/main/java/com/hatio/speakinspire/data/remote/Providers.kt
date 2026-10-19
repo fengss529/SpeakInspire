@@ -61,14 +61,68 @@ object Providers {
         ProviderConfig.MIMO -> MIMO
         else -> CUSTOM
     }
+
+    /**
+     * 每个服务商的候选模型。
+     *
+     * ## 为什么默认推荐 flash 而不是 pro
+     *
+     * 这个 App 的追问是**流式逐字浮现**的——
+     * 用户发出话，要看着文字一个个出现。
+     * Pro 模型的推理深度对这个任务（追问 + 润色）没有实质帮助，
+     * 但首字延迟明显更长。
+     *
+     * 那个延迟落在最关键的位置：**用户发出话之后的第一次等待**。
+     * 等太久，人就以为卡死了，然后就退出了。
+     *
+     * 所以默认 flash，pro 放在列表里让需要的人自己选。
+     */
+    fun candidates(id: String): List<ModelChoice> = when (id) {
+        ProviderConfig.DEEPSEEK -> listOf(
+            ModelChoice(
+                model = "deepseek-flash",
+                label = "Flash（推荐）",
+                note = "首字快。追问逐字浮现全靠它",
+            ),
+            ModelChoice(
+                model = "deepseek-reasoner",
+                label = "Reasoner",
+                note = "会先思考再回答，首字明显更慢",
+            ),
+        )
+
+        ProviderConfig.MIMO -> listOf(
+            ModelChoice(
+                model = "mimo-v2.6-pro",
+                label = "Pro（推荐）",
+                note = "小米 MiMo 当前主力",
+            ),
+        )
+
+        else -> emptyList()
+    }
 }
+
+/**
+ * 一个候选模型。
+ *
+ * [note] 是给用户看的一句话理由——
+ * 不是解释参数，是告诉他「什么时候该选这个」。
+ */
+data class ModelChoice(
+    val model: String,
+    val label: String,
+    val note: String = "",
+)
 
 /**
  * 服务商特有的请求差异。
  *
- * 两家的心智模型正好相反，这是最容易写错的地方：
- * - DeepSeek：思考是**换模型名**（`deepseek-reasoner`），非思考模型不用额外参数
- * - MiMo：思考是**请求参数**（`thinking: {"type":"disabled"}`），默认开启
+ * **两家都必须显式发 `thinking:{"type":"disabled"}`**（实测 2026-10-16）：
+ * 不发的话会返回 reasoning_content 而 content 为空，
+ * 追问的逐字浮现会变成漫长的空白等待。
+ *
+ * 之前记的「DeepSeek 靠换模型名控制」是错的，已被实测证伪。
  */
 object ProviderDialect {
 

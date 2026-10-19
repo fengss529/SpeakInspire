@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -23,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,7 +33,18 @@ import com.hatio.speakinspire.ui.theme.Spacing
  * ## 加号为什么居中
  *
  * 「随手记」是这个App 最高频的动作——想到就记，摩擦必须归零，
- * 否则习惯第3 天就断了。放在正中第3 位，两个拇指都能轻松够到。
+ * 否则习惯第 3 天就断了。放在正中第 3 位，两个拇指都能轻松够到。
+ *
+ * ## 刻意不做数字角标
+ *
+ * 之前在「记录」和「选题」上显示了待处理数量，想法是「提醒用户有事要做」。
+ * 实际效果相反：
+ *
+ * - 用户看到数字会当成「欠了任务」，产生压力而不是行动
+ * - 「记录」tab 显示全部想法（不是待办队列），数字在这里没有语义
+ * - 一个每天只记一条的App，不该让人觉得自己「落后了」
+ *
+ * 角标是别人的KPI，不是用户的需要。
  */
 enum class MainTab(val label: String, val icon: String) {
     RECORD("记录", "✎"),
@@ -52,8 +61,6 @@ fun MainBottomBar(
     current: MainTab?,
     onSelect: (MainTab) -> Unit,
     onCreate: () -> Unit,
-    recordBadge: Int = 0,
-    topicBadge: Int = 0,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -68,13 +75,13 @@ fun MainBottomBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            TabItem(MainTab.RECORD, current, onSelect, recordBadge)
-            TabItem(MainTab.THINK, current, onSelect, 0)
+            TabItem(MainTab.RECORD, current, onSelect)
+            TabItem(MainTab.THINK, current, onSelect)
 
             CreateButton(onCreate)
 
-            TabItem(MainTab.TOPIC, current, onSelect, topicBadge)
-            TabItem(MainTab.STAT, current, onSelect, 0)
+            TabItem(MainTab.TOPIC, current, onSelect)
+            TabItem(MainTab.STAT, current, onSelect)
         }
     }
 }
@@ -84,7 +91,6 @@ private fun TabItem(
     tab: MainTab,
     current: MainTab?,
     onSelect: (MainTab) -> Unit,
-    badge: Int,
 ) {
     val active = current == tab
     val color = if (active) {
@@ -100,31 +106,11 @@ private fun TabItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box {
-            Text(
-                text = tab.icon,
-                fontSize = 19.sp,
-                color = color,
-            )
-            if (badge > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 7.dp, y = (-4).dp)
-                        .size(15.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.error),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (badge > 9) "9+" else badge.toString(),
-                        fontSize = 9.sp,
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            }
-        }
+        Text(
+            text = tab.icon,
+            fontSize = 19.sp,
+            color = color,
+        )
         Spacer(Modifier.height(3.dp))
         Text(
             text = tab.label,

@@ -31,14 +31,12 @@ class MainViewModel @Inject constructor(
         repo.observeTopics(),
     ) { ideas, library, topics ->
         MainUiState(
-            record = IdeaStateDeriver.deepeningQueue(ideas),
+            // 记录 tab 显示全部想法——它是「我记过的东西」的清单，
+            // 不是流水线的一环。深化完成后不该从这里消失。
+            record = IdeaStateDeriver.recordTimeline(ideas),
             think = library,
             topic = topics,
             allIdeas = ideas,
-            recordBadge = IdeaStateDeriver.deepeningQueue(ideas).size,
-            topicBadge = topics.count {
-                IdeaStateDeriver.derive(it) == IdeaState.TOPIC
-            },
         )
     }.stateIn(
         scope = viewModelScope,
@@ -117,8 +115,6 @@ data class MainUiState(
     val topic: List<IdeaView> = emptyList(),
     /** 全部想法，供统计页用 */
     val allIdeas: List<IdeaView> = emptyList(),
-    val recordBadge: Int = 0,
-    val topicBadge: Int = 0,
 ) {
     val isEmpty: Boolean get() = allIdeas.isEmpty()
 

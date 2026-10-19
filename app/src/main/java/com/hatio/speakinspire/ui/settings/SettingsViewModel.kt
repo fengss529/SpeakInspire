@@ -3,6 +3,7 @@ package com.hatio.speakinspire.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hatio.speakinspire.data.model.ProviderConfig
+import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
 import com.hatio.speakinspire.data.repository.ProviderRepository
 import com.hatio.speakinspire.service.AiService
@@ -59,12 +60,70 @@ class SettingsViewModel @Inject constructor(
             selectedProvider = providerId,
             baseUrl = preset.baseUrl,
             model = preset.model,
+            addingModel = false,
             thinkingDisabled = preset.thinkingDisabled,
             // 换服务商时清掉 key，避免把A家的key 发给 B 家
             apiKey = "",
             keyAlreadySaved = false,
             testResult = null,
         )
+    }
+
+    /**
+     * 切换到同一个服务商下的另一个模型。
+     *
+     * 换模型不换key —— 同一个服务商的 key 是一样的，
+     * 只需要换模型名。误以为要重填key 会让流程显得很麻烦。
+     */
+    fun selectModel(model: String) {
+        val current = _state.value
+        val preset = Providers.byId(current.selectedProvider)
+        viewModelScope.launch {
+            repo.saveConfig(
+                preset.copy(
+                    apiKey = current.apiKey,
+                    model = model,
+                    thinkingDisabled = current.thinkingDisabled,
+                )
+            )
+            _state.value = current.copy(model = model, testResult = null)
+        }
+    }
+
+    /** 加一个自定义模型名（服务商自己的新模型上线时用） */
+    fun addModel() {
+        val current = _state.value
+        // 直接跳到添加状态，让用户直接填名字
+        _state.value = current.copy(addingModel = true)
+    }
+
+    /** 确认新增的自定义模型 */
+    fun commitNewModel(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            _state.value = _state.value.copy(addingModel = false)
+            return
+        }
+        val current = _state.value
+        viewModelScope.launch {
+            repo.saveConfig(
+                Providers.byId(current.selectedProvider).copy(
+                    apiKey = current.apiKey,
+                    model = trimmed,
+                    baseUrl = current.baseUrl,
+                    thinkingDisabled = current.thinkingDisabled,
+                )
+            )
+            _state.value = current.copy(
+                model = trimmed,
+                addingModel = false,
+                testResult = null,
+            )
+        }
+    }
+
+    fun cancelAddModel() {
+        _state.value = _state.value.copy(addingModel = false)
     }
 
     fun updateBaseUrl(v: String) {
@@ -138,6 +197,8 @@ data class SettingsUiState(
     val selectedProvider: String = ProviderConfig.DEEPSEEK,
     val baseUrl: String = "",
     val model: String = "",
+    /** 正在输入新的自定义模型名 */
+    val addingModel: Boolean = false,
     val apiKey: String = "",
     val thinkingDisabled: Boolean = true,
     /** 是否已保存过 key——决定输入框显示占位符还是掩码 */
@@ -157,6 +218,14 @@ data class SettingsUiState(
 
     /** 自定义服务商才需要填地址与模型名 */
     val needsManualInput: Boolean get() = selectedProvider == ProviderConfig.CUSTOM
+
+    /** 该服务商的候选模型。空表示要手填 */
+    val modelChoices: List<ModelChoice> get() = Providers.candidates(selectedProvider)
+
+    /** 当前模型不在候选列表里——服务商可能上了新模型 */
+    val isCustomModelName: Boolean
+        get() = modelChoices.isNotEmpty() && modelChoices.none { it.model == model }
+
 
     /** 预置服务商的 key 提示。写清楚去哪儿拿，减少用户困惑 */
     val keyHint: String get() = when (selectedProvider) {
