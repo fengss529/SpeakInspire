@@ -94,10 +94,16 @@ class RequestBuilderTest {
         )
     }
 
+    /**
+     * 成文仍按配置走；追问不看了——追问必关思考（见 RequestBuilder.probe 注释）。
+     * 那一条由 `ProbeRequestJsonTest.追问无条件关掉思考` 守着。
+     */
     @Test
-    fun `未关闭思考时不发该参数`() {
-        val body = RequestBuilder.probe(
-            Providers.DEEPSEEK.copy(thinkingDisabled = false), "系统提示", emptyList()
+    fun `成文未关闭思考时不发该参数`() {
+        val body = RequestBuilder.compose(
+            Providers.DEEPSEEK.copy(thinkingDisabled = false),
+            "系统提示",
+            listOf(ChatMessage.user("素材")),
         )
         assertFalse(body.contains("thinking"))
     }

@@ -128,10 +128,29 @@ class ProbeRequestJsonTest {
         )
     }
 
+    /**
+     * 追问必须**自己**关掉思考。
+     *
+     * 依赖 `cfg.thinkingDisabled` 太脆：它的值取决于历史配置、
+     * 用户点没点过、旧版本写了什么。而思考模式开着时，
+     * 思维链会先吃光输出额度，正文一个字都不来——
+     * 核心功能不该被一个「省点时间」的选项搞挂。
+     */
     @Test
-    fun `不关思考时请求同样合法`() {
+    fun `追问无条件关掉思考`() {
         val noThinking = cfg.copy(thinkingDisabled = false)
         val body = RequestBuilder.probe(noThinking, "系统提示", listOf(ChatMessage.user("记一句")))
+        MiniJson.parse(body)
+        assertTrue(
+            "配置没勾也要发 disabled：$body",
+            body.contains("\"thinking\":{\"type\":\"disabled\"}"),
+        )
+    }
+
+    @Test
+    fun `成文仍然尊重配置`() {
+        val noThinking = cfg.copy(thinkingDisabled = false)
+        val body = RequestBuilder.compose(noThinking, "提示", listOf(ChatMessage.user("素材")))
         MiniJson.parse(body)
         assertTrue("没勾关思考就不该出现 thinking 参数", !body.contains("\"thinking\""))
     }

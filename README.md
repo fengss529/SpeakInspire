@@ -3,11 +3,11 @@
 提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 成文章 → 转选题 → 拍摄**。
 
 ```bash
-gradlew.bat test                # 跑全部 327 条单元测试
+gradlew.bat test                # 跑全部 338 条单元测试
 gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 ```
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.1**（versionCode 9）。
+包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.2**（versionCode 10）。
 
 ---
 
@@ -19,7 +19,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | 服务层 | ✅ | `RealAiService` 已接真实模型（DeepSeek / MiMo，OpenAI 兼容） |
 | 领域层 | ✅ | 8 状态派生 + 手势判定，纯函数 |
 | UI | ✅ | 五格导航 + 记录详情 + 编辑 + 追问 + 成文 + 转选题 + 设置 |
-| 测试 | ✅ | **327 条，0 失败**（含追问→成文→选题的链路测试） |
+| 测试 | ✅ | **338 条，0 失败**（含追问→成文→选题的链路测试） |
 | 未开始 | ⬜ | 拍摄后反馈（P2 的核心风险点） |
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（来源视图）→ 转选题（骨架）→ 标记已拍摄。
@@ -59,17 +59,18 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `ProviderDialectTest` | 17 | 服务商差异 + SSE 容错 |
 | `FakeAiServiceTest` | 16 | Fake 六项能力自测 |
 | `RequestBuilderTest` | 15 | 请求体拼装、thinking 参数 |
-| `ErrorMapperTest` | 20 | 错误归因、**400 不再落到「看不出来」** |
+| `ErrorMapperTest` | 20 | 错误归因、**400 / 空回复都不再落到「看不出来」** |
 | `SettingsUiStateTest` | 10 | 设置页状态 |
 | **`DeepeningFlowTest`** | **12** | **追问→成文→选题的真实链路** |
 | `ProbeMethodTest` | 15 | **四种追问方法：彼此不同、边界相同** |
-| **`ProbeRequestJsonTest`** | **11** | **四个 builder 的请求体真解析一遍** |
+| **`ProbeRequestJsonTest`** | **12** | **四个 builder 的请求体真解析一遍** |
+| **`StreamAuditTest`** | **9** | **空回复分三种，各自说得出原因** |
 | `ModelOutputParserTest` | 8 | 成文 / 角度 / 骨架解析 |
 | `GestureJudgeTest` | 7 | 右滑标记 / 左滑搁置 |
 | `ResponseParserTest` / `SseParserTest` | 12 | 响应与帧解析 |
 | `EditNoteTest` | 5 | 编辑写库 |
 | `AiServiceContractTest` / `ComposeResultTest` | 7 | 三方法必须分开 |
-| **合计** | **327** | **0 失败** |
+| **合计** | **338** | **0 失败** |
 
 ### 测试的盲区（踩过）
 
@@ -195,6 +196,48 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 而「还剩几个」正是这版刻意不显示的——倒计时会诱发敷衍作答。
 一个永远数不出意义的点阵只是装饰。方法名留着，它回答的是
 「我在设置里换的问法生效了吗」。
+
+---
+
+## V0.8.2：空回复不能再是一句「再试一次」
+
+修完逗号之后仍然失败的话，剩下最可能的一条是**思考模式**。
+
+DeepSeek 文档写明：思考模式**默认开启**。开着时模型先吐一长串
+`reasoning_content`，正文要等很久；而 `max_tokens` 一旦被思维链吃光，
+正文就永远不来——表现是「点了追问没有反应」。
+
+而 `probe` 以前是「看 `cfg.thinkingDisabled` 决定发不发」。
+那个值取决于历史配置、用户点没点过、旧版本写了什么——**太脆**。
+一个用来省时间的选项，不该有能力让核心功能整个失效。
+
+### 追问现在无条件关掉思考
+
+```
+probe(...)  →  forceNoThinking = true
+```
+
+不看配置，只对预置服务商（DeepSeek / MiMo）生效。
+自定义服务商不强塞——谁也不知道对面认不认这个字段，
+发一个它不认识的参数可能直接被 400 拒掉。
+
+顺带把 `max_tokens` 从 200 提到 1024：追问只要一个问题，放宽不会让回答变长，
+只是给正文留出被截断之前的空间。
+
+### 三种空回复，三种说法
+
+以前 SSE 里解析不出 `content` 的帧全被丢掉，于是三种完全不同的故障
+在界面上长得一模一样，都是「模型没返回问题」：
+
+| 实际发生了什么 | 现在报什么 | 用户该做什么 |
+|---|---|---|
+| 只收到 `reasoning_content` | 「只输出了思考过程，正文没出来」 | 关掉思考模式 |
+| 流里夹着 `error` 帧 | 「服务商在返回过程中报了错」+ 原文 | 看原文：额度？审核？ |
+| 一帧都没推 | 「连上了，但没有返回内容」 | 重试或换模型 |
+
+`StreamAuditTest` 九条把三种情形分开钉住。
+
+**这一条的意义不在于修好某个 bug，而在于：下次再坏，界面会自己说是哪种坏。**
 
 ---
 

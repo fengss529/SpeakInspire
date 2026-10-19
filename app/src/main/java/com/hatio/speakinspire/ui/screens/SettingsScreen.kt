@@ -295,9 +295,11 @@ fun SettingsScreen(
                         onCheckedChange = onThinking,
                     )
                     Column(Modifier.padding(start = Spacing.s)) {
-                        Text("关掉思考模式", fontSize = 14.sp)
+                        Text("关掉思考模式（只影响成文）", fontSize = 14.sp)
                         Text(
-                            "开着的话每句话前会多等几秒。追问迟迟不出字时，先确认这里是打开的。",
+                            "追问永远不思考——思考模式开着时，思维链会先把输出额度吃光，" +
+                                "正文一个字都出不来，问不出问题。所以这一步不能再交给设置。" +
+                                "这里的开关只管写文章那一步。",
                             fontSize = 11.sp,
                             lineHeight = 17.sp,
                             color = MaterialTheme.colorScheme.outline,

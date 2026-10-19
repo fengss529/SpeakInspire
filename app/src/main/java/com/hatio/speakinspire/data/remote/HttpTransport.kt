@@ -51,4 +51,41 @@ object SseParser {
         if (ProviderDialect.isDoneFrame(t)) return null
         return ProviderDialect.extractDelta(t)
     }
+
+    /**
+     * 这一帧里有没有非空的 `reasoning_content`。
+     *
+     * 思考模式开着时，模型先吐一长串思维链，正文要等很久甚至根本不来。
+     * App 以前把这些帧直接丢掉，于是「一个字都没出来」——
+     * 用户不知道是网络慢、模型坏了，还是思考模式没关。
+     */
+    fun hasReasoning(line: String): Boolean {
+        val t = line.trim()
+        if (!t.startsWith("data:")) return false
+        val idx = t.indexOf("\"reasoning_content\"")
+        if (idx < 0) return false
+        val rest = t.substring(idx)
+        // "reasoning_content":null 或 "" 都算没有
+        return !rest.startsWith("\"reasoning_content\":null") &&
+            !rest.startsWith("\"reasoning_content\": \"\"") &&
+            !rest.startsWith("\"reasoning_content\":\"\"")
+    }
+
+    /**
+     * 流里夹带的错误。
+     *
+     * 服务商在 HTTP 200 建立连接之后，仍可能在流中间发一帧
+     * `data: {"error":{...}}`（额度用尽、内容审核、参数不支持都会这样）。
+     * 以前这帧被当成「没有 content」丢掉，最终表现为**空回复**——
+     * 一个明明有原因的失败，被藏成了一句「模型没返回问题」。
+     */
+    fun extractError(line: String): String? {
+        val t = line.trim()
+        if (!t.contains("\"error\"")) return null
+        val json = if (t.startsWith("data:")) t.removePrefix("data:").trim() else t
+        if (!json.contains("\"error\"")) return null
+        // 空对象 {"error":null} 不算
+        if (json.contains("\"error\":null") || json.contains("\"error\": null")) return null
+        return json
+    }
 }

@@ -31,7 +31,22 @@ object RequestBuilder {
 
     const val CHAT_PATH = "/chat/completions"
 
-    /** 追问：流式，且要模型只提问不给答案 */
+    /**
+     * 追问：流式，且要模型只提问不给答案。
+     *
+     * ## 思考模式在这里无条件关掉
+     *
+     * 追问要的是**一个问题**，最多两句话。思考模式对这件事没有任何帮助，
+     * 但它有两个确定的坏处：
+     *
+     * 1. 首字延迟从「立刻」变成「等十几秒」，而这段时间用户什么都看不到；
+     * 2. `max_tokens` 会被思维链先吃光，正文一个字都不来——**
+     *    表现就是「点了追问没有反应」**。
+     *
+     * 所以这里不看 `cfg.thinkingDisabled`。那个开关的默认值取决于历史配置、
+     * 用户有没有点过、旧版本的写入，太不可靠——一个用于「省点时间」的选项，
+     * 不该有能力让核心功能整个失效。
+     */
     fun probe(
         cfg: ProviderConfig,
         systemPrompt: String,
@@ -44,7 +59,10 @@ object RequestBuilder {
         model = model,
         stream = true,
         temperature = 0.7,
-        maxTokens = 200,
+        // 200 tokens 只够「已经关掉思考」的前提。留出余量，
+        // 让万一没关掉时也还能挤出正文，而不是全被算力吃空。
+        maxTokens = 1024,
+        forceNoThinking = true,
     )
 
     /** 成文：一次性，要求返回 JSON，带 isMine 标注 */
@@ -115,10 +133,11 @@ object RequestBuilder {
         temperature: Double,
         maxTokens: Int? = null,
         jsonMode: Boolean = false,
+        forceNoThinking: Boolean = false,
     ): String = buildString {
         append("{")
         append("\"model\":").append(jsonString(model ?: cfg.model)).append(",")
-        append(thinkingPrefix(cfg))
+        append(thinkingPrefix(cfg, forceNoThinking))
         append("\"stream\":").append(stream).append(",")
         append("\"temperature\":").append(temperature).append(",")
         if (maxTokens != null) append("\"max_tokens\":").append(maxTokens).append(",")
@@ -140,12 +159,18 @@ object RequestBuilder {
     /**
      * thinking 参数前缀。
      *
-     * 两家默认都开思考，必须显式关闭；不需要时**一个字节都不发**。
+     * [force] 为 true 时**预置服务商**无条件关闭，不看配置——追问必须这样，
+     * 理由见 [probe] 的注释。
+     *
+     * 自定义服务商不强塞：谁也不知道对面支不支持这个参数，
+     * 发一个它不认识的字段可能直接被 400 拒掉。那里仍按用户配置走。
      */
-    private fun thinkingPrefix(cfg: ProviderConfig): String =
-        if (ProviderDialect.needsThinkingParam(cfg) && cfg.thinkingDisabled)
-            "\"thinking\":{\"type\":\"disabled\"},"
-        else ""
+    private fun thinkingPrefix(cfg: ProviderConfig, force: Boolean): String {
+        if (!ProviderDialect.needsThinkingParam(cfg)) return ""
+        val close = cfg.thinkingDisabled ||
+            (force && cfg.providerId != ProviderConfig.CUSTOM)
+        return if (close) "\"thinking\":{\"type\":\"disabled\"}," else ""
+    }
 
     /** JSON 字符串转义 —— 用户原话里出现引号是常态 */
     fun jsonString(s: String): String {

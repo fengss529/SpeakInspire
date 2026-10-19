@@ -61,9 +61,16 @@ class RealAiService(
             ),
             probeMessages(context),
         )
-        return transport.stream(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
-            .transformLines()
-            .flowOn(Dispatchers.IO)
+        return flow {
+            val audit = StreamAudit()
+            transport.stream(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
+                .parseContent(audit)
+                .collect { emit(it) }
+            // 流正常结束却一个字都没有——这里必须抛，不能默默返回空流。
+            // 返回空流的话，界面上只剩「模型没返回问题」，
+            // 而真实原因（思考吃光了额度 / 流里带着 error）就藏没了。
+            audit.raiseIfNothing()
+        }.flowOn(Dispatchers.IO)
     }
 
     /**
@@ -185,9 +192,9 @@ class RealAiService(
     // ---------- SSE 行 → 内容片段 ----------
 
     /**
- * SSE 行 → 内容片段。
- *
- * ## 契约：传输层每次 emit 的是**一整行**（不含换行符）
+     * SSE 行 → 内容片段。
+     *
+     * ## 契约：传输层每次 emit 的是**一整行**（不含换行符）
      *
      * OkHttp 的 `readUtf8Line()` 天然满足这个契约，所以这里不需要缓冲拼接。
      *
@@ -200,21 +207,32 @@ class RealAiService(
      * 表现为追问只显示第一句。
      *
      * 教训：无法判定「半行」时不要缓冲。这里契约明确，直接按行处理。
+     *
+     * ## 顺便记账（[audit]）
+     *
+     * 「没解析出内容」的帧不再直接丢掉，而是记下它到底是
+     * 思考帧还是错误帧。空回复因此能说清原因。
      */
-    private fun Flow<String>.transformLines(): Flow<String> = flow {
+    private fun Flow<String>.parseContent(audit: StreamAudit): Flow<String> = flow {
         collect { chunk ->
             // 兼容一批里塞了多行的情况
-            if (chunk.contains('\n')) {
-                chunk.split('\n').forEach { line ->
-                    if (line.isNotBlank()) SseParser.parse(line)?.let { emit(it) }
+            val lines = if (chunk.contains('\n')) chunk.split('\n') else listOf(chunk)
+            for (line in lines) {
+                if (line.isBlank()) continue
+                audit.frames++
+                val content = SseParser.parse(line)
+                if (content != null) {
+                    audit.chars += content.length
+                    emit(content)
+                    continue
                 }
-            } else {
-                SseParser.parse(chunk)?.let { emit(it) }
+                if (audit.errorText == null) audit.errorText = SseParser.extractError(line)
+                if (SseParser.hasReasoning(line)) audit.reasoningFrames++
             }
         }
     }.catch { e ->
         if (e is TransportException) throw e
-        throw TransportException(ErrorKind.MALFORMED_STREAM, e.message)
+        throw TransportException(ErrorKind.MALFORMED_STREAM, e.message, detail = audit.errorText)
     }
 
     // ---------- 响应解析 ----------
@@ -321,6 +339,62 @@ class RealAiService(
 /** 成文素材不足时拒稿的阈值 */
 object ThinMaterial {
     const val THRESHOLD = 300
+}
+
+/**
+ * 一次流式请求的记账。
+ *
+ * 存在的唯一理由是：**让空回复说得出原因**。
+ *
+ * 以前 `parse` 返回 null 的帧被直接丢掉，于是三种完全不同的故障
+ * 在界面上长得一模一样，都是「模型没返回问题」：
+ *
+ * | 实际发生了什么 | 用户该做什么 |
+ * |---|---|
+ * | 思考模式吃光了输出 | 去设置里关掉思考 |
+ * | 流里带了 error 帧（额度/审核） | 看原文，充值或改内容 |
+ * | 服务商什么都没推 | 重试或换模型 |
+ *
+ * 现在它们分别抛不同异常，界面给不同话术。
+ */
+internal class StreamAudit {
+    /** 收到的 SSE 行数（含空帧与注释帧） */
+    var frames = 0
+
+    /** 解析出的正文总字数 */
+    var chars = 0
+
+    /** 含非空 reasoning_content 的帧数 */
+    var reasoningFrames = 0
+
+    /** 流里夹带的 error 原文 */
+    var errorText: String? = null
+
+    /** 流结束但一个字都没有 → 抛出可归因的异常 */
+    fun raiseIfNothing() {
+        if (chars > 0) return
+        throw when {
+            errorText != null -> TransportException(
+                kind = ErrorKind.STREAM_ERROR,
+                detail = errorText,
+            )
+
+            reasoningFrames > 0 -> TransportException(
+                kind = ErrorKind.THINKING_ONLY,
+                detail = "只收到 $reasoningFrames 段思考内容，正文为空",
+            )
+
+            frames == 0 -> TransportException(
+                kind = ErrorKind.NO_CONTENT,
+                detail = "连接已建立，服务商没有推送任何数据",
+            )
+
+            else -> TransportException(
+                kind = ErrorKind.NO_CONTENT,
+                detail = "收到 $frames 段数据，没有一段能解析出正文",
+            )
+        }
+    }
 }
 
 /** 传输层异常，带可归因的错误类型 */

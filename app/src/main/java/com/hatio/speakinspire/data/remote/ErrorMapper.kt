@@ -88,6 +88,16 @@ object ErrorMapper {
             ErrorKind.BAD_REQUEST ->
                 "请求被服务商拒了。这通常是 App 这边的请求写错了，不是你填错了。"
 
+            ErrorKind.THINKING_ONLY ->
+                "模型只输出了思考过程，正文没出来——思考模式把输出额度吃光了。" +
+                    "去设置里勾上「关掉思考模式」，再试一次。"
+
+            ErrorKind.NO_CONTENT ->
+                "服务商连上了，但没有返回内容。再试一次；一直这样的话，去设置里换一个模型名。"
+
+            ErrorKind.STREAM_ERROR ->
+                "服务商在返回过程中报了错。"
+
             ErrorKind.UNKNOWN ->
                 "出了点问题。"
         }
