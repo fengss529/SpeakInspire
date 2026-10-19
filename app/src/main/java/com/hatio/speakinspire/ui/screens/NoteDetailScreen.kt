@@ -69,6 +69,8 @@ fun NoteDetailScreen(
     createdLabel: String,
     rounds: List<Round>,
     hasArticle: Boolean,
+    /** 是否已有可续的对话——决定按钮文案 */
+    hasDeepened: Boolean,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onDeepen: () -> Unit,
@@ -196,9 +198,7 @@ fun NoteDetailScreen(
                         onClick = onDeepen,
                         modifier = Modifier.weight(1.4f),
                     ) {
-                        Text(
-                            if (rounds.isEmpty()) "AI 追问" else "继续追问",
-                        )
+                        Text(if (hasDeepened) "继续追问" else "AI 追问")
                     }
                 }
             }

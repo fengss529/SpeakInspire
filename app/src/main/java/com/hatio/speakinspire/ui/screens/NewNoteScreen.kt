@@ -58,17 +58,24 @@ fun NewNoteScreen(
     initialBody: String = "",
     saving: Boolean = false,
 ) {
-    var title by remember { mutableStateOf(initialTitle) }
-    var body by remember { mutableStateOf(initialBody) }
+    // 关键：**不能写成 remember { mutableStateOf(initialTitle) }**。
+    //
+    // remember 只在首次组合时求值一次。而编辑模式下，
+    // initialTitle 来自 ViewModel 的异步加载——首次组合时它是空的，
+    // 加载完成后值变了但 remember 不会重新初始化，
+    // 于是输入框保持空白（真机反馈的「编辑后变空白页」）。
+    //
+    // 用 key 让它跟着 initialTitle 重新初始化。
+    var title by remember(initialTitle) { mutableStateOf(initialTitle) }
+    var body by remember(initialBody) { mutableStateOf(initialBody) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // 编辑时不自动弹键盘——用户已经看得到内容了，
-    // 直接把光标弹出来反而打断「先看看改哪」
+    // 新建时自动弹键盘；编辑时不弹——
+    // 用户已经看得到内容了，直接把光标弹出来反而打断「先看看改哪」
+    val isNewNote = initialTitle.isEmpty() && initialBody.isEmpty()
     LaunchedEffect(initialTitle, initialBody) {
-        if (initialTitle.isEmpty() && initialBody.isEmpty()) {
-            focus.requestFocus()
-        }
+        if (isNewNote) focus.requestFocus()
     }
 
     val canSave = !saving && (title.isNotBlank() || body.isNotBlank())
@@ -83,7 +90,7 @@ fun NewNoteScreen(
                 },
                 title = {
                     Text(
-                        text = if (initialTitle.isEmpty() && initialBody.isEmpty()) "记一下" else "编辑记录",
+                        text = if (isNewNote) "记一下" else "编辑记录",
                         style = MaterialTheme.typography.titleMedium,
                     )
                 },

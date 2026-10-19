@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,9 +80,12 @@ fun DeepeningScreen(
     onSkip: () -> Unit,
     onFinishEarly: () -> Unit,
     onCompose: () -> Unit,
+    /** 没有任何问题时，让用户能重新触发一次——卡住时的兜底出路 */
+    onRetry: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
+    val inputFocus = remember { FocusRequester() }
 
     // 有新内容时滚到底部
     LaunchedEffect(state.rounds.size, state.streaming) {
@@ -88,7 +93,25 @@ fun DeepeningScreen(
         if (last >= 0) listState.animateScrollToItem(last)
     }
 
+    // 有问题在等回答 → 自动弹键盘。
+    //
+    // 真机反馈的「点 AI 追问后卡住」有一半是这个：
+    // 页面停在那里，输入框要用户先点一下才知道能打字。
+    // 有问题等着就该直接能打字——意图不用解释。
+    LaunchedEffect(state.pendingAnswer) {
+        if (state.pendingAnswer) {
+            inputFocus.requestFocus()
+        }
+    }
+
     val canSend = input.isNotBlank() && !state.busy
+
+    // 空状态：既没有历史轮次，也没有任何问题。
+    // 这时候页面是死的——必须给一条出路。
+    val isBlank = state.rounds.isEmpty() &&
+        state.streaming.isBlank() &&
+        state.errorMessage == null &&
+        !state.busy
 
     Scaffold(
         topBar = {
@@ -145,6 +168,39 @@ fun DeepeningScreen(
                     }
                 }
 
+                // 什么都还没有：给一条出路。
+                // 真机反馈的「点 AI 追问后卡住」最难受的地方就是这里——
+                // 页面空白、没有错误、没有按钮，用户只能退出，
+                // 而且不知道是网络问题还是 App 坏了。
+                if (isBlank) {
+                    item("blank") {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = Spacing.xl),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = "还没开始",
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Spacer(Modifier.height(Spacing.xs))
+                            Text(
+                                text = "网络慢的话可以再试一次",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            Spacer(Modifier.height(Spacing.l))
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = onRetry,
+                            ) {
+                                Text("重新问一次")
+                            }
+                        }
+                    }
+                }
+
                 // 已完成的轮次：折叠成一行
                 items(
                     state.rounds.filter { it.answered },
@@ -182,6 +238,7 @@ fun DeepeningScreen(
             // 输入区
             if (!state.finished) {
                 InputBar(
+                    focusRequester = inputFocus,
                     value = input,
                     // AI 还在出第一个问题时不给输入——
                     // 那时候用户还没看到问题，输入了也不知道回什么
@@ -429,6 +486,7 @@ private fun ErrorHint(message: String) {
 /** 底部输入栏 */
 @Composable
 private fun InputBar(
+    focusRequester: FocusRequester,
     value: String,
     enabled: Boolean,
     placeholder: String,
@@ -469,7 +527,10 @@ private fun InputBar(
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(
                     MaterialTheme.colorScheme.primary
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                // 有问题等回答时靠它自动弹键盘
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
             )
         }
         Spacer(Modifier.width(Spacing.s))

@@ -171,6 +171,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onThinking = { svm.updateThinking(it) },
                 onTest = { svm.testConnection() },
                 onSave = { svm.save() },
+                onSavedConsumed = { svm.consumeSavedFlag() },
                 onAddModel = { svm.addModel() },
             )
         }
@@ -185,6 +186,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 createdLabel = nstate.createdLabel,
                 rounds = nstate.rounds,
                 hasArticle = nstate.hasArticle,
+                hasDeepened = nstate.hasDeepened,
                 onBack = { route = r.parent ?: Route.Home },
                 onEdit = { route = Route.Edit(r.noteId) },
                 onDeepen = { route = Route.Deepening(r.noteId) },
@@ -258,6 +260,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onSkip = { dvm.skipTyping() },
                 onFinishEarly = { dvm.finishEarly() },
                 onCompose = { route = Route.Compose(r.noteId) },
+                onRetry = { dvm.retryFirstQuestion() },
             )
         }
 

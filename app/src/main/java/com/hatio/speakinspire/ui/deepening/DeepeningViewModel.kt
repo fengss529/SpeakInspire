@@ -80,12 +80,42 @@ class DeepeningViewModel @Inject constructor(
                 errorMessage = null,
             )
 
-            // 全新会话 → 立刻问第一个问题
-            val needsFirstQuestion = rounds.isEmpty() ||
-                rounds.lastOrNull()?.question.isNullOrBlank()
-            if (needsFirstQuestion && deepening?.finishedAt == null) {
+            // 会话已收尾（有文章或用户主动结束）就不再自动问
+            if (deepening?.finishedAt != null) return@launch
+
+            // 最后一轮已经问出来但用户还没答 → 不重复问，
+            // 直接聚焦输入框让用户回答。
+            //
+            // 这一步之前写错了：条件写成「最后一轮有问题就跳过」，
+            // 结果「深化中」的记录（有历史轮次、未回答）会既不提问、
+            // 也不聚焦，用户看到的就是一个不能动的页面——
+            // 真机实测反馈的「点击 AI 追问卡住」就是这个。
+            val lastAnswered = rounds.lastOrNull()?.answered == true
+            val lastQuestionBlank = rounds.lastOrNull()?.question.isNullOrBlank()
+            if (lastQuestionBlank) {
+                // 最后一轮只有问题没有内容（异常状态），重新问一次
+                askFirstQuestion()
+            } else if (!lastAnswered) {
+                // 正常状态：等用户回答。让输入框自动获得焦点，
+                // 用户落地就能直接打字，不用先点一下输入框
+                _state.value = _state.value.copy(pendingAnswer = true)
+            } else {
+                // 全部答完还没收尾，继续问下一个
                 askFirstQuestion()
             }
+        }
+    }
+
+    /**
+     * 用户主动重试。
+     *
+     * 卡住时必须给一条出路——否则用户只能退出，
+     * 而他甚至不知道是网络问题还是 App 坏了。
+     */
+    fun retryFirstQuestion() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = false, errorMessage = null)
+            askFirstQuestion()
         }
     }
 
@@ -278,6 +308,11 @@ data class DeepeningUiState(
     val finished: Boolean = false,
     val composing: Boolean = false,
     val errorMessage: String? = null,
+    /**
+     * 有问题在等用户回答，且还没聚焦过输入框。
+     * UI 层用它决定要不要自动弹键盘。
+     */
+    val pendingAnswer: Boolean = false,
 ) {
     /** 已完成的问答对数 */
     val completedRounds: Int get() = rounds.count { it.answered }

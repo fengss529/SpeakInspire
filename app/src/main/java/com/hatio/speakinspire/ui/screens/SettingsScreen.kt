@@ -76,11 +76,25 @@ fun SettingsScreen(
     onThinking: (Boolean) -> Unit,
     onTest: () -> Unit,
     onSave: () -> Unit,
+    /** 提示弹完后回调，把 saved 标志清掉 */
+    onSavedConsumed: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
 
+    // 保存成功后**留在设置页**，只提示一下。
+    //
+    // 之前是保存完自动退回上一页，结果用户反馈
+    // 「填完 key 后打不开设置页」——
+    // 其实是保存后被弹回首页，再点设置时页面在别的 tab，
+    // 看起来像打不开。
+    //
+    // 设置页不是表单提交页，保存完留在原地更符合预期：
+    // 用户可能还想确认「选的是哪个模型」「Key 存上了没」。
     LaunchedEffect(state.saved) {
-        if (state.saved) onBack()
+        if (state.saved) {
+            snackbar.showSnackbar("已保存")
+            onSavedConsumed()
+        }
     }
     LaunchedEffect(state.saveError) {
         state.saveError?.let { snackbar.showSnackbar(it) }
