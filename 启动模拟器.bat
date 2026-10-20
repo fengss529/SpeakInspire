@@ -73,7 +73,9 @@ echo.
 echo   启动 %AVD% （软件渲染）
 echo   首次启动慢，请耐心等 2-3 分钟。
 echo.
-start "" "%EMU%" -avd %AVD% -gpu swiftshader_indirect -no-snapshot-load
+REM -scale 0.4：本机桌面是 1280x720，而 AVD 是 1080x2400 像素。
+REM 不缩放的话窗口本身就比屏幕高，只能看到一小截。
+start "" "%EMU%" -avd %AVD% -gpu swiftshader_indirect -no-snapshot-load -scale 0.4
 
 REM ---------- 等设备上线 ----------
 
@@ -113,6 +115,15 @@ echo   [!] 系统启动超时，先装 App 试试。
 echo.
 
 :READY
+REM ---------- 把窗口摆回屏幕内 ----------
+REM
+REM 模拟器按「缩放后的桌面」计算居中位置，这台机器上算出来的
+REM 窗口顶部是 -730，整块窗口在屏幕上方看不见。
+REM 进程明明在跑、adb 也连得上，但桌面上一片空白，很容易误判成没启动。
+echo.
+echo   把模拟器窗口摆回屏幕内...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fix-emulator-window.ps1"
+
 REM ---------- 装 APK ----------
 
 if exist "%APK%" (

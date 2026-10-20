@@ -289,6 +289,46 @@ class DeepeningViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 重新打开已收尾的会话。
+     *
+     * ## 为什么必须有这个
+     *
+     * 收尾只是标记，不是锁。成文页素材不足时会给一句
+     * 「回去再聊聊」——用户点了回去，却发现输入框没了，
+     * 因为 `finished` 把整个会话关死了。
+     *
+     * 那句话等于一个死路：说"回去再聊聊"，而回去根本聊不了。
+     *
+     * 所以收尾之后必须留一道能回来的门。用户自己结束的，
+     * 也应该是他自己能重新打开——这和「结束追问是用户的权利」
+     * 是同一条原则的另一半。
+     */
+    fun reopen() {
+        val current = _state.value
+        viewModelScope.launch {
+            val rounds = current.rounds
+            if (rounds.any { it.answered }) {
+                repo.saveDeepening(
+                    Deepening(
+                        id = "d_${current.noteId}",
+                        noteId = current.noteId,
+                        rounds = rounds,
+                        startedAt = System.currentTimeMillis(),
+                        // 清掉收尾时间：会话重新成为「进行中」
+                        finishedAt = null,
+                        estimatedRounds = current.maxRounds,
+                    )
+                )
+            }
+            _state.value = current.copy(
+                finished = false,
+                // 最后一轮如果是待答的问题，直接把焦点打回输入框
+                focusTick = current.focusTick + 1,
+            )
+        }
+    }
+
     private suspend fun persist(noteId: String, rounds: List<Round>, finished: Boolean = false) {
         if (rounds.none { it.answered }) return
         repo.saveDeepening(
@@ -368,6 +408,22 @@ data class DeepeningUiState(
     /** 有一个问题正在等用户回答——决定输入框能不能用 */
     val awaitingAnswer: Boolean
         get() = rounds.lastOrNull()?.let { !it.answered && it.question.isNotBlank() } == true
+
+    /**
+     * 当前等回答的那个问题。**界面必须把它渲染出来。**
+     *
+     * 这一条单独拎出来，是因为它曾经是空的：
+     * 界面只渲染「已回答的轮次」和「正在流式的内容」，
+     * 流一结束、问题进了 rounds 但还没答——**气泡就消失了**。
+     * 用户看到字闪了一下，然后页面空空，只有输入框写着「回应它」。
+     *
+     * 「AI 追问进行不下去」的真正原因就在这里，
+     * 而它一直藏在 prompt 和网络问题的背后。
+     */
+    val pendingQuestion: String?
+        get() = rounds.lastOrNull()
+            ?.takeIf { !it.answered && it.question.isNotBlank() }
+            ?.question
 
     /** 最后一轮之后不再显示新的 AI 气泡（有正在流的也算） */
     val showTypingBubble: Boolean get() = streaming.isNotEmpty()

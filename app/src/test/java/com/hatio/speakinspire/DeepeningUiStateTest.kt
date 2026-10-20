@@ -208,4 +208,57 @@ class DeepeningUiStateTest {
     fun `初始状态没有错误信息`() {
         assertEquals(null, state().errorMessage)
     }
+
+    // ---------- 当前待答的问题必须能被界面拿到 ----------
+
+    /**
+     * 这一组守的是整个 App 曾经最严重的一个洞。
+     *
+     * 界面只渲染「已回答的轮次」和「正在流式的内容」。流一结束，
+     * 问题进了 rounds 但还没答，于是**没有任何一处会渲染它**——
+     * 用户看到字闪一下，然后页面空空，输入框却写着「回应它」。
+     *
+     * `pendingQuestion` 就是那唯一该被画出来的东西。
+     */
+    @Test
+    fun `最后一轮未回答时它就是当前问题`() {
+        val s = state(
+            rounds = listOf(
+                Round("第一问？", "答过了"),
+                Round("第二问？", null),
+            )
+        )
+        assertEquals("第二问？", s.pendingQuestion)
+        assertTrue(s.awaitingAnswer)
+    }
+
+    @Test
+    fun `全部答完时没有当前问题`() {
+        val s = state(rounds = listOf(Round("问？", "答")))
+        assertEquals(null, s.pendingQuestion)
+        assertFalse(s.awaitingAnswer)
+    }
+
+    @Test
+    fun `空会话没有当前问题`() {
+        assertEquals(null, state().pendingQuestion)
+    }
+
+    @Test
+    fun `空问题的残渣不该被当成当前问题`() {
+        // 旧版本 bug 留下的数据：轮次在，问题是空的
+        val s = state(rounds = listOf(Round("问？", "答"), Round("", null)))
+        assertEquals(null, s.pendingQuestion)
+        assertFalse(s.awaitingAnswer)
+    }
+
+    @Test
+    fun `正在流式时当前问题仍是上一轮待答的`() {
+        // 流式内容走 streaming，pendingQuestion 不该跟着变成半截的词
+        val s = state(
+            rounds = listOf(Round("第一问？", "答"), Round("第二问？", null)),
+            streaming = "第三",
+        )
+        assertEquals("第二问？", s.pendingQuestion)
+    }
 }

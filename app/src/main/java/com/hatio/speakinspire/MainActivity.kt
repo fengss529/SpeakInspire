@@ -257,13 +257,14 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             val cvm: ComposeViewModel = hiltViewModel(key = "compose_${r.noteId}")
             val cstate by cvm.state.collectAsStateWithLifecycle()
             LaunchedEffect(r.noteId) {
-                cvm.load(r.noteId)
-                // 读 ViewModel 自己的 StateFlow 而不是组合里的 cstate：
-                // load() 刚写完状态，collectAsState 还没重组，
-                // 这时读 cstate 拿到的是旧值，会误判成「没有文章」而重复生成
-                if (!cvm.state.value.hasContent && !cvm.state.value.alreadyComposed) {
-                    cvm.compose()
-                }
+                // 自动成文的时机必须交给 ViewModel。
+                //
+                // 这里曾经是 `load(id)` 然后立刻判断 `cvm.state.value.hasContent`——
+                // 但 load 内部是 viewModelScope.launch，调用返回时状态还没写进去，
+                // 于是必然判断成「没有文章」，于是 compose() 在 noteId 还是空串时发出，
+                // findIdea("") 返回 null，静默退出。
+                // 表现：成文页停在「还没开始」，要用户再点一次。
+                cvm.load(r.noteId, autoCompose = true)
             }
             ComposeScreen(
                 state = cstate,
@@ -295,6 +296,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     route = Route.Detail(r.noteId)
                 },
                 onRetry = { dvm.retryFirstQuestion() },
+                onReopen = { dvm.reopen() },
             )
         }
 

@@ -374,6 +374,15 @@ class RealAiServiceTest {
 
     private fun service(transport: HttpTransport) = RealAiService(transport) { cfg() }
 
+    /**
+     * 足量素材。
+     *
+     * 成文现在会在本地先数字数，不足 300 直接拒稿、不发请求。
+     * 所以凡是要测「请求长什么样」的用例，都必须先喂够字数，
+     * 否则连 transport 都不会被调用。
+     */
+    private fun enough() = ChatMessage.user("我".repeat(320))
+
     // ---------- 追问：流式 ----------
 
     @Test
@@ -493,7 +502,7 @@ class RealAiServiceTest {
         t.postResponse = """
             {"choices":[{"message":{"content":"{\"title\":\"标题\",\"paragraphs\":[{\"text\":\"我说的\",\"isMine\":true},{\"text\":\"AI补的\",\"isMine\":false}]}"}}]}
         """.trimIndent()
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("一些回答"), ChatMessage.ai("问"))))
+        val r = service(t).composeArticle(ctx(listOf(enough(), ChatMessage.ai("问"))))
         assertTrue(r is ComposeResult.Success)
         val s = r as ComposeResult.Success
         assertEquals("标题", s.title)
@@ -509,13 +518,40 @@ class RealAiServiceTest {
         assertTrue("没有用户素材应拒稿", r is ComposeResult.Rejected)
     }
 
+    /**
+     * 真机实测：素材不足时模型确实会拒绝，但它把拒绝理由写成了
+     * `{"title":"你聊得太少了…","paragraphs":[...]}` —— 一个正常的文章形状。
+     * App 于是把它当成成稿，还给了「存进思考库」按钮。
+     *
+     * 字数我们自己数得清，不该交给模型的自觉。
+     */
+    @Test
+    fun `素材不足时本地就拒稿不发请求`() = runBlocking {
+        val t = FakeTransport()
+        val r = service(t).composeArticle(
+            ctx(listOf(ChatMessage.user("hhhh"), ChatMessage.ai("怕什么？")))
+        )
+        assertTrue(r is ComposeResult.Rejected)
+        assertEquals(4, (r as ComposeResult.Rejected).actualChars)
+        assertTrue("拒稿不该花一次 API 调用：${t.lastBody}", t.lastBody.isEmpty())
+    }
+
+    @Test
+    fun `素材刚好够时才发请求`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse =
+            """{"choices":[{"message":{"content":"{\"title\":\"T\",\"paragraphs\":[{\"text\":\"x\",\"isMine\":true}]}"}}]}"""
+        service(t).composeArticle(ctx(listOf(ChatMessage.user("我".repeat(300)))))
+        assertTrue("够字数就该真的发出去", t.lastBody.isNotEmpty())
+    }
+
     @Test
     fun `模型返回拒绝标记时也拒稿`() = runBlocking {
         val t = FakeTransport()
         t.postResponse = """
             {"choices":[{"message":{"content":"{\"rejected\":true,\"reason\":\"素材太少\"}"}}]}
         """.trimIndent()
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("短"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Rejected)
     }
 
@@ -525,7 +561,7 @@ class RealAiServiceTest {
         t.postResponse = """
             {"choices":[{"message":{"content":"```json\n{\"title\":\"T\",\"paragraphs\":[{\"text\":\"x\",\"isMine\":true}]}\n```"}}]}
         """.trimIndent()
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("回答"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Success)
         assertEquals("T", (r as ComposeResult.Success).title)
     }
@@ -534,7 +570,7 @@ class RealAiServiceTest {
     fun `网络异常时返回失败而非崩溃`() = runBlocking {
         val t = FakeTransport()
         t.throwOnPost = TransportException(ErrorKind.NETWORK_UNAVAILABLE)
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("回答"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Failed)
     }
 
@@ -543,7 +579,7 @@ class RealAiServiceTest {
         // 归错类会让用户去查 WiFi，而真正的问题在设置页的 key
         val t = FakeTransport()
         t.throwOnPost = TransportException(ErrorKind.INVALID_API_KEY)
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("回答"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Failed)
         assertEquals(
             ErrorKindLite.UNAUTHORIZED,
@@ -555,7 +591,7 @@ class RealAiServiceTest {
     fun `空响应不产生空文章`() = runBlocking {
         val t = FakeTransport()
         t.postResponse = """{"choices":[]}"""
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("回答"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue("空响应应判失败，不能返回空文章", r !is ComposeResult.Success)
     }
 
@@ -696,7 +732,7 @@ class RealAiServiceTest {
             ctx(
                 listOf(
                     ChatMessage.ai("你最早意识到这件事，是哪一次？"),
-                    ChatMessage.user("去年冬天"),
+                    enough(),
                     ChatMessage.ai("那次之后你改了什么？"),
                 )
             )
@@ -711,12 +747,12 @@ class RealAiServiceTest {
         val t = FakeTransport()
         t.postResponse = okJson
         service(t).composeArticle(
-            ctx(listOf(ChatMessage.ai("问题？"), ChatMessage.user("我的回答")))
+            ctx(listOf(ChatMessage.ai("问题？"), enough()))
         )
         val root = MiniJson.parse(t.lastBody) as Map<*, *>
         val msgs = root["messages"] as List<*>
         assertEquals("user", (msgs.last() as Map<*, *>)["role"])
-        assertEquals("我的回答", (msgs.last() as Map<*, *>)["content"])
+        assertEquals("已经以用户结尾，就不该再追加一条指令", 320, ((msgs.last() as Map<*, *>)["content"] as String).length)
     }
 
     @Test
@@ -728,7 +764,7 @@ class RealAiServiceTest {
             statusCode = 400,
             detail = """{"error":{"message":"messages must end with user"}}""",
         )
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Failed)
         val f = r as ComposeResult.Failed
         assertTrue("必须带出原文：${f.detail}", f.detail!!.contains("must end with user"))
@@ -738,7 +774,7 @@ class RealAiServiceTest {
     fun `成文响应缺 content 时带出原始响应片段`() = runBlocking {
         val t = FakeTransport()
         t.postResponse = """{"error":{"message":"quota exceeded"}}"""
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Failed)
         assertTrue(
             "没有 content 时 raw 就是唯一线索：${(r as ComposeResult.Failed).detail}",
@@ -751,7 +787,7 @@ class RealAiServiceTest {
         val t = FakeTransport()
         t.postResponse =
             """{"choices":[{"message":{"content":"抱歉，我先说说我的理解……"}}]}"""
-        val r = service(t).composeArticle(ctx(listOf(ChatMessage.user("素材"))))
+        val r = service(t).composeArticle(ctx(listOf(enough())))
         assertTrue(r is ComposeResult.Failed)
         assertTrue(
             "解析失败要说清模型返回了什么：${(r as ComposeResult.Failed).detail}",

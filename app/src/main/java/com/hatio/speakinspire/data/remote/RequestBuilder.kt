@@ -104,16 +104,25 @@ object RequestBuilder {
         jsonMode = true,
     )
 
-    /** 生成骨架：一次性 */
+    /**
+     * 生成骨架：一次性。
+     *
+     * [articleText] 必须带上。曾经这里只发了一句「切入角度：xxx」——
+     * 模型手里没有任何素材，只能编，或者干脆返回空，
+     * 界面显示「共 0 段 · 大约 0 秒」。
+     */
     fun outline(
         cfg: ProviderConfig,
         systemPrompt: String,
         angle: String,
+        articleText: String,
         model: String? = null,
     ): String = chatBody(
         cfg = cfg,
         systemPrompt = systemPrompt,
-        messages = listOf(ChatMessage.user("切入角度：$angle")),
+        messages = listOf(
+            ChatMessage.user("文章内容：\n$articleText\n\n选定的拍摄角度：$angle"),
+        ),
         model = model,
         stream = false,
         temperature = 0.7,

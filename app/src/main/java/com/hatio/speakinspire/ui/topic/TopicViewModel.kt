@@ -59,6 +59,7 @@ class TopicViewModel @Inject constructor(
                 // 结果就是「存了选题但选题 tab 里没有」。
                 articleId = idea.article?.id ?: "",
                 articleTitle = idea.article?.title ?: idea.note.title,
+                articleParagraphs = idea.article?.paragraphs?.map { it.text } ?: emptyList(),
                 existingScript = existing,
                 shotAt = existing?.shotAt,
             )
@@ -109,7 +110,14 @@ class TopicViewModel @Inject constructor(
         viewModelScope.launch {
             val outline = try {
                 ai.buildOutline(
-                    ArticleDraft("n", current.articleTitle, current.articleTitle, emptyList()),
+                    // 文章正文必须带上。传 emptyList() 的时候，
+                    // 模型只能凭一个角度名编骨架，实际结果是空的
+                    ArticleDraft(
+                        "n",
+                        current.articleTitle,
+                        current.articleTitle,
+                        current.articleParagraphs.map { ChatMessage.user(it) },
+                    ),
                     angle,
                 )
             } catch (e: Exception) {
@@ -205,6 +213,14 @@ data class TopicUiState(
     /** 选题所属文章的真实 id。空表示这篇文章还没写成 */
     val articleId: String = "",
     val articleTitle: String = "",
+    /**
+     * 文章正文。
+     *
+     * 拆骨架必须用它——之前 `chooseAngle` 传的是空列表，
+     * 模型只拿到一句「切入角度：xxx」，没有任何素材可拆，
+     * 于是骨架页显示「共 0 段 · 大约 0 秒」。
+     */
+    val articleParagraphs: List<String> = emptyList(),
     val step: TopicStep = TopicStep.ANGLES,
     val angles: List<Angle> = emptyList(),
     val loadingAngles: Boolean = false,

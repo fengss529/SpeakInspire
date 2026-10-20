@@ -109,7 +109,21 @@ class ProbeRequestJsonTest {
 
     @Test
     fun `骨架请求是合法 JSON`() {
-        MiniJson.parse(RequestBuilder.outline(cfg, "骨架提示", "从一个具体的人讲起"))
+        MiniJson.parse(
+            RequestBuilder.outline(cfg, "骨架提示", "从一个具体的人讲起", "文章正文在此")
+        )
+    }
+
+    /** 骨架必须带文章正文，否则模型无从拆 */
+    @Test
+    fun `骨架请求里带着文章内容`() {
+        val root = MiniJson.parse(
+            RequestBuilder.outline(cfg, "骨架提示", "从一个具体的人讲起", "去年冬天我加入了一个项目")
+        ) as Map<*, *>
+        val msgs = root["messages"] as List<*>
+        val body = (msgs.last() as Map<*, *>)["content"] as String
+        assertTrue("要有正文：$body", body.contains("去年冬天我加入了一个项目"))
+        assertTrue("也要有角度：$body", body.contains("从一个具体的人讲起"))
     }
 
     @Test

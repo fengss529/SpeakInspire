@@ -84,6 +84,12 @@ fun DeepeningScreen(
     onKeep: () -> Unit,
     /** 没有任何问题时，让用户能重新触发一次——卡住时的兜底出路 */
     onRetry: () -> Unit,
+    /**
+     * 重新打开已收尾的会话。
+     *
+     * 成文页说「回去再聊聊」，回去必须真的能聊。
+     */
+    onReopen: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
@@ -232,6 +238,29 @@ fun DeepeningScreen(
                     }
                 }
 
+                // 最后一轮：问题已到、还没回答 —— 这就是当前要回的那句话。
+                //
+                // **这里曾经什么都不显示，是整个 App 最严重的一个洞。**
+                //
+                // 上面那个 items 只渲染 `answered` 的轮次，
+                // 而流式气泡只在 `streaming` 非空时存在。
+                // 于是流程是：文字一个个浮现 → 流结束 → 问题进了 rounds
+                // 但标着未回答 → **气泡消失**。
+                //
+                // 用户看到的是：闪了一下字，然后页面空空，输入框写着「回应它」。
+                // 他只能盲猜着回答。之前所有关于 prompt、JSON、思考模式的排查，
+                // 都绕过了这个更基础的事实：**问题从来没有被显示出来过。**
+                val pending = state.pendingQuestion
+                if (pending != null) {
+                    item("pending") {
+                        AiBubble(
+                            text = pending,
+                            streaming = false,
+                            onSkip = {},
+                        )
+                    }
+                }
+
                 // 收尾卡
                 if (state.finished || state.completedRounds >= state.maxRounds) {
                     item("finish") {
@@ -240,6 +269,7 @@ fun DeepeningScreen(
                             userSaidCount = state.completedRounds,
                             onCompose = onCompose,
                             onKeep = onKeep,
+                            onReopen = onReopen,
                         )
                     }
                 }
@@ -418,6 +448,7 @@ private fun FinishCard(
     userSaidCount: Int,
     onCompose: () -> Unit,
     onKeep: () -> Unit,
+    onReopen: () -> Unit,
 ) {
     Column(
         Modifier
@@ -463,6 +494,20 @@ private fun FinishCard(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("先留着")
+        }
+
+        // 收尾不是锁。
+        //
+        // 成文页素材不够时会给一句「回去再聊聊」，用户回来却只看到
+        // 这张卡——没有输入框，聊不了，那句话等于死路。
+        // 这道门必须留在这儿。
+        Spacer(Modifier.height(Spacing.xs))
+        TextButton(
+            onClick = onReopen,
+            enabled = !composing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("还没说完，再聊几句", fontSize = 13.sp)
         }
     }
 }

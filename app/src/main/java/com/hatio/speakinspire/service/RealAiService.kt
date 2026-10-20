@@ -117,11 +117,19 @@ class RealAiService(
     /** 成文：一次性 JSON 输出。素材不足必须拒稿 */
     override suspend fun composeArticle(context: DeepeningContext): ComposeResult {
         val cfg = configProvider()
-        if (context.rounds.isEmpty()) {
-            return ComposeResult.Rejected(0, ThinMaterial.THRESHOLD)
-        }
-        if (context.rounds.none { it.isUser }) {
-            return ComposeResult.Rejected(0, ThinMaterial.THRESHOLD)
+
+        // 素材不足在本地就拦住，不发给模型。
+        //
+        // 以前只在 prompt 里要求「少于 300 字就返回 rejected」，
+        // 真机实测：模型确实拒绝了，但它把拒绝的理由
+        // 写成了 `{"title": "你聊得太少了…", "paragraphs": [...]}`——
+        // 一个**正常文章的形状**。App 于是把它当成成稿渲染，
+        // 还给了「存进思考库」按钮，用户能把一段拒稿说明存成文章。
+        //
+        // 字数我们自己数得清，这件事不该交给模型的自觉。
+        val material = context.materialSize
+        if (material < ThinMaterial.THRESHOLD) {
+            return ComposeResult.Rejected(material, ThinMaterial.THRESHOLD)
         }
 
         return try {
@@ -179,6 +187,9 @@ class RealAiService(
                 cfg,
                 Prompts.OUTLINE_SYSTEM_PROMPT,
                 angle.title,
+                // 必须把文章一起发过去：骨架是从文章里拆出来的，
+                // 只给一个角度名，模型没有任何可拆的东西
+                buildArticleText(article),
             )
             val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
             val content = ResponseParser.extractContent(raw)

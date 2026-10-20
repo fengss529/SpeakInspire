@@ -195,7 +195,13 @@ JSON：{"title": "...", "paragraphs": [{"text": "...", "isMine": true|false}]}
 - 不加「建议你说」「你可以这样表达」这类引导语
 - 不改变用户文章的观点
 
-输出 JSON。
+【输出格式】
+只输出这个 JSON，不要加解释：
+{"sections":[{"title":"开场钩子","seconds":8,"goal":"这一段要让观众停下来","phrases":["我准备了整整两周","可我一上台就"],"cues":[{"icon":"停顿","text":"说完第一句停一秒"}]}]}
+- sections 固定 4 段
+- seconds 是整数，四段合计 30-60
+- phrases 是意群短语，2-4 个
+- cues 可以为空数组
 """.trimIndent()
 }
 

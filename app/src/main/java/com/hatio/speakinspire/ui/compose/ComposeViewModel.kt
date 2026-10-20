@@ -44,7 +44,22 @@ class ComposeViewModel @Inject constructor(
     private val _state = MutableStateFlow(ComposeUiState())
     val state: StateFlow<ComposeUiState> = _state.asStateFlow()
 
-    fun load(noteId: String) {
+    /**
+     * 进入成文页。
+     *
+     * [autoCompose] 为 true 时，读完数据**立刻**发起成文。
+     *
+     * 之前这个动作放在界面的 `LaunchedEffect` 里：
+     * ```
+     * cvm.load(id); if (!cstate.hasContent) cvm.compose()
+     * ```
+     * 但 `load` 是异步的，`compose()` 读到的 noteId 还是空串 →
+     * `findIdea("")` 返回 null → 静默 return。
+     * 表现是成文页停在「还没开始 / 开始整理」，等用户再点一次。
+     *
+     * 顺序必须在这里保证：load 完成 → noteId 就位 → 再成文。
+     */
+    fun load(noteId: String, autoCompose: Boolean = false) {
         viewModelScope.launch {
             val idea = repo.findIdea(noteId) ?: return@launch
             _state.value = ComposeUiState(
@@ -65,6 +80,8 @@ class ComposeViewModel @Inject constructor(
                 sourceMode = idea.article?.edited == true,
                 originalNote = idea.note.body,
             )
+            // 已有文章就不重复生成——那是用户的资产，不该被覆盖
+            if (autoCompose && idea.article == null) compose()
         }
     }
 
@@ -72,6 +89,12 @@ class ComposeViewModel @Inject constructor(
     fun compose() {
         val current = _state.value
         if (current.loading) return
+        // noteId 为空说明数据还没读完。这时发请求只会查不到东西然后静默退出，
+        // 用户看到的是一句「开始整理」——看起来像按钮没生效。
+        if (current.noteId.isBlank()) {
+            _state.value = current.copy(errorMessage = "还没读到这条记录，稍等一下再点。")
+            return
+        }
 
         _state.value = current.copy(loading = true, errorMessage = null)
 
