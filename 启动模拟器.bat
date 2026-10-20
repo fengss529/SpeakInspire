@@ -73,17 +73,27 @@ echo.
 echo   启动 %AVD% （ANGLE 渲染）
 echo   首次启动慢，请耐心等 2-3 分钟。
 echo.
-REM -gpu angle_indirect：走 D3D11，而不是 OpenGL。
+REM -gpu swangle：ANGLE 前端 + SwiftShader 后端，**GLES 和 Vulkan 全在 CPU**。
 REM
-REM 原来的 swiftshader_indirect 只把 3D 放到 CPU，**窗口合成仍然走 Intel 核显**。
-REM 高频纹理上传会让 igfxn 驱动超时，Windows 的 TDR 机制强制重置驱动——
-REM 表现就是「屏幕隔一会儿黑一下」，事件日志里是 Event ID 4101。
+REM 这条路走过两个弯路：
+REM   swiftshader_indirect  只把 guest 的 3D 放 CPU，Qt 窗口仍用系统 OpenGL，
+REM                         高频合成照样让 igfxn 超时 → TDR → 屏幕闪黑
+REM   angle_indirect        这版模拟器不认识这个名字，日志里是
+REM                         "not valid, switching to 'auto'" —— 静默回退到
+REM                         host（直接压 Intel 核显），比原来更糟
+REM
+REM 37.2 版本的有效值只有：auto / host / software / lavapipe / swiftshader / swangle
+REM 其中 swangle 是唯一"ANGLE + 纯 CPU"的组合。
 REM
 REM -feature -Vulkan：关掉 Vulkan 层，少一条出问题的路径。
 REM
-REM -scale 0.4：本机桌面是 1280x720，而 AVD 是 1080x2400 像素。
-REM 不缩放的话窗口本身就比屏幕高，只能看到一小截。
-start "" "%EMU%" -avd %AVD% -gpu angle_indirect -no-snapshot-load -no-boot-anim -scale 0.4 -feature -Vulkan
+REM 代价：软件渲染慢，启动时可能弹一次 System UI ANR，点 Wait 即可。
+REM 想要流畅可以手工换 -gpu host，但那会重新压核显——用之前先把
+REM TdrDelay 调到 60，见 README。
+REM
+REM 窗口大小不在这里控制：本版 -scale 已废弃（"obsolete and will be ignored"），
+REM 由下面的 fix-emulator-window.ps1 用 MoveWindow 处理。
+start "" "%EMU%" -avd %AVD% -gpu swangle -no-snapshot-load -no-boot-anim -feature -Vulkan
 
 REM ---------- 等设备上线 ----------
 
