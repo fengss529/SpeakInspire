@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Round
@@ -223,12 +224,23 @@ fun DeepeningScreen(
                     }
                 }
 
-                // 已完成的轮次：折叠成一行
+                // 已完成的轮次：问答成对显示。
+                //
+                // 曾经只显示用户原话（一行灰点）。那条规则的**本意**是
+                // 「不要让 AI 替你总结你说过的话」——结果执行成了
+                // 「连 AI 问过什么都不显示」，于是回看时根本不知道自己
+                // 那一句是在回答什么，六个孤零零的句子排在那里。
+                //
+                // 现在问题和回答都在，方向靠左右区分（左问右答），
+                // 视觉权重比当前这一轮轻，历史感保留。
                 items(
                     state.rounds.filter { it.answered },
                     key = { it.hashCode() },
                 ) { round ->
-                    FoldedRound(summary = state.summaryOf(round))
+                    HistoryTurn(
+                        question = round.question,
+                        answer = round.answer.orEmpty(),
+                    )
                 }
 
                 // 正在流的 AI 气泡
@@ -253,11 +265,15 @@ fun DeepeningScreen(
                 val pending = state.pendingQuestion
                 if (pending != null) {
                     item("pending") {
-                        AiBubble(
-                            text = pending,
-                            streaming = false,
-                            onSkip = {},
-                        )
+                        // 和上面的历史隔开一点：这一条是要你现在回答的，
+                        // 不能让它淹没在一串同样气质的旧问题里
+                        Column(Modifier.padding(top = Spacing.l)) {
+                            AiBubble(
+                                text = pending,
+                                streaming = false,
+                                onSkip = {},
+                            )
+                        }
                     }
                 }
 
@@ -354,36 +370,95 @@ private fun OriginCard(body: String) {
 }
 
 /**
- * 折叠的已完成轮次。
+ * 一轮已完成的问答。
  *
- * 显示**用户原话**——不是 AI 的问题。
- * 用户记得的是自己说过什么，而 AI 总结会把原话再加工一遍，
- * 让他怀疑「我说的是这个意思吗」。
+ * ## 左问右答
+ *
+ * 方向感是这个界面最要紧的东西：**问题在左，我的回答在右**，
+ * 和当前这一轮（[AiBubble] 在左）保持同一套语言，用户不用重新学。
+ *
+ * ## 为什么不再只显示用户原话
+ *
+ * 早期这里是一条灰点加一句用户原话，理由是「不要让 AI 总结用户的话」。
+ * 这个理由本身没错，但执行成了「连 AI 问过什么都不显示」——
+ * 回看历史时，六个孤零零的句子排在那里，谁也不知道
+ * 「Sense of meaning in life」是在回答哪个问题。
+ *
+ * 显示 AI 的**原问题**和「让 AI 总结用户的话」是两件完全不同的事。
+ *
+ * ## 视觉上要比当前轮次轻
+ *
+ * 历史是已经过去的，字号小一号、底色淡一档、行距紧一点。
+ * 但可读性不能降——它存在的意义就是让人回看。
  */
 @Composable
-private fun FoldedRound(summary: String) {
-    Row(
+private fun HistoryTurn(question: String, answer: String) {
+    Column(
         Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .clickable(enabled = false) { }
-            .padding(horizontal = Spacing.s, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(bottom = Spacing.m),
     ) {
-        Box(
-            Modifier
-                .size(4.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.outlineVariant),
-        )
-        Spacer(Modifier.width(Spacing.s))
-        Text(
-            text = summary,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
+        // 问题：左
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+        ) {
+            Box(
+                Modifier
+                    .widthIn(max = 300.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 2.dp,
+                            topEnd = 12.dp,
+                            bottomEnd = 12.dp,
+                            bottomStart = 12.dp,
+                        )
+                    )
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+            ) {
+                Text(
+                    text = question,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(5.dp))
+
+        // 我的回答：右。颜色比问题重一点——这是他自己说的话
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Box(
+                Modifier
+                    .widthIn(max = 300.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 12.dp,
+                            topEnd = 2.dp,
+                            bottomEnd = 12.dp,
+                            bottomStart = 12.dp,
+                        )
+                    )
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+            ) {
+                Text(
+                    text = answer,
+                    fontSize = 13.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    // 有人一句话能说几百字。历史里留 8 行足够辨认，
+                    // 再多就把页面顶到很远——要回看原文可以去成文页
+                    maxLines = 8,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
