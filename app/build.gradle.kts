@@ -15,8 +15,8 @@ android {
         applicationId = "com.hatio.speakinspire"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.8.6"
+        versionCode = 16
+        versionName = "0.8.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

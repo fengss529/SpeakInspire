@@ -201,12 +201,11 @@ class DeepeningViewModel @Inject constructor(
         val current = _state.value
         if (!current.awaitingAnswer) return
 
-        // 收尾之后用户又开口了，说明他改主意了——把会话重新打开。
+        // 兜底：finished 但仍有一个待答问题（旧数据，或将来别的路径造成）。
+        // 用户一旦开口，说明他改主意了，会话要重新打开——
+        // 否则输入框在手、问题在眼前，下一个问题却永远不来。
         //
-        // 不这么做的话会陷入一个死结：收尾时恰好有个问题待答，
-        // 输入框回来了（见 DeepeningScreen 的条件），用户答了，
-        // 但 finished 仍是 true，下一个问题不会来，界面还停在「你说完了」。
-        //
+        // 正常路径走不到这里：finishEarly() 已经把末尾那句丢掉了。
         // 注意后续必须基于 base 运算：直接用 current.copy(...)
         // 会把刚清掉的 finished 又带回来。
         val base = if (current.finished) current.copy(finished = false) else current
@@ -289,13 +288,29 @@ class DeepeningViewModel @Inject constructor(
         viewModelScope.launch { persist(current.noteId, next) }
     }
 
-    /** 提前收尾。用户不想聊了但保留已说的 */
+    /**
+     * 提前收尾。用户不想聊了但保留已说的。
+     *
+     * **末尾那个没回答的问题要一起丢掉。**
+     *
+     * 点「收尾」的意思是「我不答了」。把它留在 rounds 里，
+     * 会造出一个自相矛盾的界面：收尾卡说「你说完了」，
+     * 上面还摆着一个等你回答的问题。
+     *
+     * 而如果为此把收尾卡藏起来（之前那样），事情更糟——
+     * 点了收尾之后，顶栏按钮消失了、卡片没出现、问题还在，
+     * 整个界面只有一处变化：按钮不见了。用户只能说「点了没反应」。
+     *
+     * 所以：收尾 = 结束对话，那句话不再要了。
+     */
     fun finishEarly() {
         val current = _state.value
         if (current.streaming.isNotBlank()) skipTyping()
         viewModelScope.launch {
-            persist(current.noteId, _state.value.rounds, finished = true)
-            _state.value = _state.value.copy(finished = true)
+            // 只丢末尾连着的一串未答轮次，中间已回答的必须留住
+            val finalRounds = _state.value.rounds.dropLastWhile { !it.answered }
+            persist(_state.value.noteId, finalRounds, finished = true)
+            _state.value = _state.value.copy(rounds = finalRounds, finished = true)
         }
     }
 
@@ -336,6 +351,12 @@ class DeepeningViewModel @Inject constructor(
                 // 最后一轮如果是待答的问题，直接把焦点打回输入框
                 focusTick = current.focusTick + 1,
             )
+
+            // 收尾时把待答的问题丢掉了，所以重新打开后手里可能一个可答的问题都没有。
+            // 不主动问一个，输入框就不会出现——又回到「看着能聊，其实打不了字」。
+            if (!_state.value.awaitingAnswer) {
+                askQuestion(_state.value.rounds)
+            }
         }
     }
 

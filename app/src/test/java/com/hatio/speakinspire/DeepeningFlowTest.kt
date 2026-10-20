@@ -22,6 +22,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -227,16 +228,16 @@ class DeepeningFlowTest {
     }
 
     /**
-     * 真机截图里的矛盾状态：AI 刚问完一个问题，界面却说「你说完了」。
+     * 真机反馈「点收尾没反应」的根因。
      *
-     * 成因是收尾时那段刚流完的内容被落地成了待答轮次，而输入框被
-     * `!finished` 藏掉——问题清清楚楚摆着，却打不了字。
+     * 收尾时末尾那个没回答的问题被留在 rounds 里，
+     * 而收尾卡又有 `!hasPending` 的条件——两边一抵消，
+     * 界面上只有一处变化：顶栏的「收尾」按钮不见了。
      *
-     * 现在：只要 pendingQuestion 非空，界面就必须给输入框；
-     * 用户一旦开口，会话自动重新打开。
+     * 现在收尾 = 结束对话，那句话不再要了。
      */
     @Test
-    fun `收尾时若有待答问题界面仍能输入`() = runTest {
+    fun `收尾会把末尾没回答的问题一起丢掉`() = runTest {
         seedNote()
         ai.questionScript = listOf("问题一", "问题二")
 
@@ -247,31 +248,32 @@ class DeepeningFlowTest {
 
         val s = vm.state.value
         assertTrue("用户点了收尾", s.finished)
-        assertEquals(
-            "问题还在等回答——界面据此显示输入框",
-            "问题二",
+        assertNull(
+            "待答的问题要丢掉，否则收尾卡和问题会同时摆着",
             s.pendingQuestion,
         )
+        assertEquals("已回答的轮次必须留住", 1, s.rounds.size)
+        assertEquals("回答一", s.rounds[0].answer)
     }
 
     @Test
-    fun `收尾后用户又回答会重新打开会话`() = runTest {
+    fun `收尾后重新打开会补一个新问题`() = runTest {
         seedNote()
-        ai.questionScript = listOf("问题一", "问题二")
+        ai.questionScript = listOf("问题一", "问题二", "问题三")
 
         val vm = DeepeningViewModel(repo, ai, probeStore)
         vm.load("n1")
         vm.send("回答一")
         vm.finishEarly()
-        assertTrue(vm.state.value.finished)
+        vm.reopen()
 
-        vm.send("回答二")
-
-        assertFalse(
-            "收了尾又开口，说明改主意了——会话必须重新打开，否则下一个问题永远不来",
-            vm.state.value.finished,
+        val s = vm.state.value
+        assertFalse("重新打开后不该还算结束", s.finished)
+        assertNotNull(
+            "手里没有可答的问题就得主动问一个，否则输入框不出现",
+            s.pendingQuestion,
         )
-        assertEquals("回答二", vm.state.value.rounds[1].answer)
+        assertTrue("必须能输入", s.awaitingAnswer)
     }
 
     @Test

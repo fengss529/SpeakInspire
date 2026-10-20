@@ -158,7 +158,19 @@ fun DeepeningScreen(
                     }
                 },
                 actions = {
-                    if (state.completedRounds > 0 && !state.finished) {
+                    // 「收尾」这个出口必须活着。
+                    //
+                    // 平时 `finished` 为 true 就不必再收了。但有一种状态
+                    // 会让两条路同时封死：会话被标记过收尾（旧数据，
+                    // 或上一版 finishEarly 没丢掉最后那句），而末尾还挂着
+                    // 一个没回答的问题。这时收尾卡被 `!hasPending` 挡住，
+                    // 按钮又因为 `!finished` 不显示——用户看得见问题、
+                    // 打得了字，却没有任何办法结束它。
+                    //
+                    // 所以：只要还有问题待答，这个按钮就得留着。
+                    // 点下去 finishEarly() 会把它一起收掉，收尾卡才出得来。
+                    val canStillFinish = !state.finished || state.pendingQuestion != null
+                    if (state.completedRounds > 0 && canStillFinish) {
                         TextButton(onClick = onFinishEarly) {
                             Text("收尾", fontSize = 13.sp)
                         }
