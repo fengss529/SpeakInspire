@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -223,6 +224,54 @@ class DeepeningFlowTest {
         val s = vm.state.value
         assertEquals("五轮都答过", 5, s.completedRounds)
         assertTrue("应有收尾卡", s.completedRounds >= s.maxRounds)
+    }
+
+    /**
+     * 真机截图里的矛盾状态：AI 刚问完一个问题，界面却说「你说完了」。
+     *
+     * 成因是收尾时那段刚流完的内容被落地成了待答轮次，而输入框被
+     * `!finished` 藏掉——问题清清楚楚摆着，却打不了字。
+     *
+     * 现在：只要 pendingQuestion 非空，界面就必须给输入框；
+     * 用户一旦开口，会话自动重新打开。
+     */
+    @Test
+    fun `收尾时若有待答问题界面仍能输入`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题一", "问题二")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("回答一")   // 问出「问题二」，待答
+        vm.finishEarly()
+
+        val s = vm.state.value
+        assertTrue("用户点了收尾", s.finished)
+        assertEquals(
+            "问题还在等回答——界面据此显示输入框",
+            "问题二",
+            s.pendingQuestion,
+        )
+    }
+
+    @Test
+    fun `收尾后用户又回答会重新打开会话`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题一", "问题二")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("回答一")
+        vm.finishEarly()
+        assertTrue(vm.state.value.finished)
+
+        vm.send("回答二")
+
+        assertFalse(
+            "收了尾又开口，说明改主意了——会话必须重新打开，否则下一个问题永远不来",
+            vm.state.value.finished,
+        )
+        assertEquals("回答二", vm.state.value.rounds[1].answer)
     }
 
     @Test

@@ -11,6 +11,6 @@
       版本号。与 build.gradle.kts 的 versionName 保持一致，
       改版本时两处都要改。
     -->
-    <string name="version_label">V0.8.4</string>
+    <string name="version_label">V0.8.5</string>
 
 </resources>

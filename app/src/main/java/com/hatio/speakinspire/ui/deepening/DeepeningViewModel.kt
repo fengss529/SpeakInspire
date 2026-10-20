@@ -201,10 +201,20 @@ class DeepeningViewModel @Inject constructor(
         val current = _state.value
         if (!current.awaitingAnswer) return
 
-        val nextRounds = current.rounds.dropLast(1) +
-            current.rounds.last().copy(answer = userText)
+        // 收尾之后用户又开口了，说明他改主意了——把会话重新打开。
+        //
+        // 不这么做的话会陷入一个死结：收尾时恰好有个问题待答，
+        // 输入框回来了（见 DeepeningScreen 的条件），用户答了，
+        // 但 finished 仍是 true，下一个问题不会来，界面还停在「你说完了」。
+        //
+        // 注意后续必须基于 base 运算：直接用 current.copy(...)
+        // 会把刚清掉的 finished 又带回来。
+        val base = if (current.finished) current.copy(finished = false) else current
 
-        _state.value = current.copy(
+        val nextRounds = base.rounds.dropLast(1) +
+            base.rounds.last().copy(answer = userText)
+
+        _state.value = base.copy(
             rounds = nextRounds,
             streaming = "",
             busy = true,
@@ -215,15 +225,15 @@ class DeepeningViewModel @Inject constructor(
 
         streamJob = viewModelScope.launch {
             // 先落库再请求——网络失败也不该让刚说的话消失
-            persist(current.noteId, nextRounds)
+            persist(base.noteId, nextRounds)
 
             val ctx = DeepeningContext(
-                noteId = current.noteId,
-                originalNote = current.noteBody,
+                noteId = base.noteId,
+                originalNote = base.noteBody,
                 rounds = flattenForAi(nextRounds),
                 roundIndex = nextRounds.count { it.answered } - 1,
-                maxRounds = current.maxRounds,
-                probeMethod = current.probeMethod,
+                maxRounds = base.maxRounds,
+                probeMethod = base.probeMethod,
             )
 
             try {
@@ -259,7 +269,7 @@ class DeepeningViewModel @Inject constructor(
                     _state.value.focusTick + 1
                 },
             )
-            if (newQuestion.isNotBlank()) persist(current.noteId, appended)
+            if (newQuestion.isNotBlank()) persist(base.noteId, appended)
         }
     }
 

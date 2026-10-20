@@ -261,8 +261,13 @@ fun DeepeningScreen(
                     }
                 }
 
-                // 收尾卡
-                if (state.finished || state.completedRounds >= state.maxRounds) {
+                // 收尾卡。
+                //
+                // **有问题在等回答时不出现**：AI 刚问完一句，界面却宣布
+                // 「你说完了」，然后下面摆着输入框——那是在跟用户说两句话。
+                // 等这一轮答完（pendingQuestion 为空）卡片再出来。
+                val hasPending = state.pendingQuestion != null
+                if ((state.finished || state.completedRounds >= state.maxRounds) && !hasPending) {
                     item("finish") {
                         FinishCard(
                             composing = state.composing,
@@ -283,7 +288,14 @@ fun DeepeningScreen(
             }
 
             // 输入区
-            if (!state.finished) {
+            //
+            // **只要有一个问题在等回答，就必须能输入**，哪怕会话已经收尾。
+            //
+            // 真机截图里的矛盾状态就是这么来的：AI 刚问完一个问题，
+            // 用户恰好点了「收尾」（那时 `skipTyping()` 把内容落地成待答轮次，
+            // 同时 finished = true），于是界面上问题清清楚楚摆着，
+            // 输入框却被 `!finished` 藏掉了——看着一个问题，打不了字。
+            if (!state.finished || state.pendingQuestion != null) {
                 InputBar(
                     focusRequester = inputFocus,
                     value = input,
