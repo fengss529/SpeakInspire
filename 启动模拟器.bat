@@ -70,12 +70,20 @@ for %%F in ("%USERPROFILE%\.android\avd\%AVD%.avd\*.lock") do (
 REM ---------- 启动 ----------
 
 echo.
-echo   启动 %AVD% （软件渲染）
+echo   启动 %AVD% （ANGLE 渲染）
 echo   首次启动慢，请耐心等 2-3 分钟。
 echo.
+REM -gpu angle_indirect：走 D3D11，而不是 OpenGL。
+REM
+REM 原来的 swiftshader_indirect 只把 3D 放到 CPU，**窗口合成仍然走 Intel 核显**。
+REM 高频纹理上传会让 igfxn 驱动超时，Windows 的 TDR 机制强制重置驱动——
+REM 表现就是「屏幕隔一会儿黑一下」，事件日志里是 Event ID 4101。
+REM
+REM -feature -Vulkan：关掉 Vulkan 层，少一条出问题的路径。
+REM
 REM -scale 0.4：本机桌面是 1280x720，而 AVD 是 1080x2400 像素。
 REM 不缩放的话窗口本身就比屏幕高，只能看到一小截。
-start "" "%EMU%" -avd %AVD% -gpu swiftshader_indirect -no-snapshot-load -scale 0.4
+start "" "%EMU%" -avd %AVD% -gpu angle_indirect -no-snapshot-load -no-boot-anim -scale 0.4 -feature -Vulkan
 
 REM ---------- 等设备上线 ----------
 
