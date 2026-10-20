@@ -384,7 +384,52 @@ App 把它当成品渲染，还给了「存进思考库」按钮。
 整块窗口在屏幕上方，进程在跑、adb 连得上，桌面上一片空白。
 
 `fix-emulator-window.ps1` 负责把它摆回可见区域（幂等、带重试），
-`启动模拟器.bat` 在系统起来后自动调用；启动参数加 `-scale 0.4`。
+`启动模拟器.bat` 在系统起来后自动调用。
+
+> 顺带一个坑：`-scale` 在这个版本**已经废弃**——
+> 日志里是 `The -scale flag is obsolete and will be ignored`。
+> 窗口尺寸只能靠 MoveWindow 摆，命令行管不了。
 
 另外补了缺失的 `opengl32sw.dll`——没有它，gfxstream 会永远卡在初始化，
 设备一直 offline。这个文件不是 SDK 自带的，从本机其他 Qt 应用复制一份即可。
+
+---
+
+## 模拟器让电脑屏幕周期性闪黑（V0.8.6）
+
+现象：开着模拟器，屏幕隔一会儿黑一下，几秒恢复。
+
+根因在系统日志里，不是猜的：
+
+```
+显示器驱动程序 igfxn 已停止响应，并且已成功恢复。
+（Provider=Display, Event ID 4101）
+```
+
+这是 Windows 的 **TDR**：Intel 核显驱动在 2 秒内没响应完
+（`TdrDelay` 默认 2 秒），系统强制重置驱动，屏幕就黑一下。
+
+### `-gpu` 参数走过两个弯路
+
+| 参数 | 实际后端 | 结果 |
+|---|---|---|
+| `swiftshader_indirect` | swiftshader | guest 的 3D 在 CPU，但 Qt 窗口仍走系统 OpenGL，还是压核显 |
+| `angle_indirect` | **host（被回退）** | 这版不认识这个名字，静默回退到 host，比原来更糟 |
+| `swangle` | swiftshader（GLES + Vulkan） | 全 CPU，日志确认 `OpenGL ES 3.0 SwiftShader 4.0.0.1` |
+
+**教训：启动参数被拒绝时模拟器不会报错退出，只打一行 ERROR 然后静默回退。**
+改 `-gpu`、`-feature` 这类参数，必须回头看日志里那行
+`emuglConfig_init: xxx_mode_selected:`，以它为准，不能看命令行里写了什么。
+
+37.2 的有效值是：`auto` / `host` / `software` / `lavapipe` / `swiftshader` / `swangle`。
+
+### 代价与兜底
+
+`swangle` 全是软件渲染，慢。启动时系统 UI 可能弹一次 ANR，点 Wait 即过。
+想要流畅就换 `-gpu host`，但那会重新压核显——换之前先把 `TdrDelay` 调到 60：
+
+```powershell
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v TdrDelay /t REG_DWORD /d 60 /f
+```
+
+重启后生效。这不会让电脑变慢，只是把「驱动 2 秒没响应就算死」改成 60 秒。
