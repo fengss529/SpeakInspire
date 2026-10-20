@@ -3,11 +3,11 @@
 提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 成文章 → 转选题 → 拍摄**。
 
 ```bash
-gradlew.bat test                # 跑全部 343 条单元测试
+gradlew.bat test                # 跑全部 351 条单元测试
 gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 ```
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.3**（versionCode 11）。
+包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.8.4**（versionCode 12）。
 
 ---
 
@@ -19,7 +19,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | 服务层 | ✅ | `RealAiService` 已接真实模型（DeepSeek / MiMo，OpenAI 兼容） |
 | 领域层 | ✅ | 8 状态派生 + 手势判定，纯函数 |
 | UI | ✅ | 五格导航 + 记录详情 + 编辑 + 追问 + 成文 + 转选题 + 设置 |
-| 测试 | ✅ | **343 条，0 失败**（含追问→成文→选题的链路测试） |
+| 测试 | ✅ | **351 条，0 失败**；**全链路已在模拟器跑通** |
 | 未开始 | ⬜ | 拍摄后反馈（P2 的核心风险点） |
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（来源视图）→ 转选题（骨架）→ 标记已拍摄。
@@ -52,7 +52,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `MappersTest` | 34 | Entity ↔ Model + JSON 编解码 |
 | `IdeaRepositoryTest` | 27 | 聚合、状态派生、写操作返回值 |
 | `RealAiServiceTest` | 29 | 真实响应解析、拒稿、错误归因、**成文请求形状** |
-| `DeepeningUiStateTest` | 18 | 进度点 / 折叠摘要 / 收尾卡 |
+| `DeepeningUiStateTest` | 23 | 进度点 / 折叠摘要 / 收尾卡 |
 | `TopicUiStateTest` | 18 | 角度选择、骨架展示 |
 | `ComposeUiStateTest` | 17 | 来源视图、拒稿路径 |
 | `PromptBoundaryTest` | 17 | 三套 prompt 的禁区 |
@@ -70,7 +70,7 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | `ResponseParserTest` / `SseParserTest` | 12 | 响应与帧解析 |
 | `EditNoteTest` | 5 | 编辑写库 |
 | `AiServiceContractTest` / `ComposeResultTest` | 7 | 三方法必须分开 |
-| **合计** | **343** | **0 失败** |
+| **合计** | **351** | **0 失败** |
 
 ### 测试的盲区（踩过）
 
@@ -329,3 +329,62 @@ AI 再问    → rounds + Round(新问题, null)
 2. 追问页的历史展开（现在折叠成一行，点了没反应）
 3. 成文页的标题编辑入口（`editTitle` 已有，UI 未接）
 4. 回收站页面（数据层已支持，UI 未接）
+
+---
+
+## V0.8.4：模拟器跑通全链路，修掉四个「只有前面成功了才显形」的洞
+
+在模拟器里第一次把「记录 → 追问 → 成文 → 选题 → 标记已拍」完整走通。
+过程中冒出来的问题，**全部依赖前一步真的成功**才能看见。
+
+### 追问页从来不显示待答的问题（最严重）
+
+列表只渲染两项：已回答的轮次、正在流式的内容。
+流一结束，问题进了 `rounds` 但标着未回答——**没有任何一处会渲染它**。
+
+用户看到的是：文字闪一下，然后页面空空，输入框却写着「回应它」。
+他只能盲猜着回答。之前关于 prompt、JSON、思考模式的全部排查，
+都绕过了这个更基础的事实。
+
+现在 `DeepeningUiState.pendingQuestion`，界面必须渲染它，五条测试守着。
+
+### 成文页停在「还没开始」
+
+`LaunchedEffect` 里 `load(id)` 之后立刻判断 `hasContent`，
+但 load 内部是 `viewModelScope.launch`——状态还没写进去，必然判成「没有文章」。
+于是 `compose()` 在 `noteId` 还是空串时发出，`findIdea("")` 返回 null，静默退出。
+
+顺序改由 ViewModel 保证：`load(noteId, autoCompose = true)`。
+
+### 拒稿被当成文章
+
+模型确实拒绝了，但它把理由写成
+`{"title":"你聊得太少了…","paragraphs":[…]}`——一个**正常文章的形状**。
+App 把它当成品渲染，还给了「存进思考库」按钮。
+
+字数我们自己数得清：不足 300 字直接 `Rejected`，不发请求。
+
+### 收尾是死路
+
+成文页说「回去再聊聊」，回去却只看到收尾卡，输入框没了。
+新增「还没说完，再聊几句」，`reopen()` 清掉 `finishedAt`。
+
+### 骨架永远是 0 段
+
+`chooseAngle` 传的 `ArticleDraft(dialogue = emptyList())`，
+模型只拿到一句「切入角度：xxx」，没有素材可拆。
+改为传文章正文，prompt 里补上 JSON schema。
+
+---
+
+## 模拟器窗口超出屏幕（V0.8.4）
+
+本机桌面 **1280×720**，而 AVD 是 1080×2400 像素。
+模拟器按缩放后的桌面居中，算出的窗口位置是 `(360, -730)`——
+整块窗口在屏幕上方，进程在跑、adb 连得上，桌面上一片空白。
+
+`fix-emulator-window.ps1` 负责把它摆回可见区域（幂等、带重试），
+`启动模拟器.bat` 在系统起来后自动调用；启动参数加 `-scale 0.4`。
+
+另外补了缺失的 `opengl32sw.dll`——没有它，gfxstream 会永远卡在初始化，
+设备一直 offline。这个文件不是 SDK 自带的，从本机其他 Qt 应用复制一份即可。
