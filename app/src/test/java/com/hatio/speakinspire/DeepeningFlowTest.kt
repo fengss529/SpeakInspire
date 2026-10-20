@@ -1,6 +1,7 @@
 package com.hatio.speakinspire
 
 import com.hatio.speakinspire.data.local.ArticleEntity
+import com.hatio.speakinspire.data.local.DeepeningEntity
 import com.hatio.speakinspire.data.local.NoteEntity
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.data.repository.InMemoryProbeMethodStore
@@ -311,6 +312,136 @@ class DeepeningFlowTest {
         assertEquals("回答还在", "这句话不能丢", s.rounds[0].answer)
         assertNotNull("应给出错误提示", s.errorMessage)
         assertTrue("失败后不该还在忙", !s.busy)
+    }
+
+    // ---------- 轮数上限与收尾卡 ----------
+
+    private fun seedDeepening(maxRounds: Int, roundsJson: String) {
+        deepeningDao.seed(
+            listOf(
+                DeepeningEntity(
+                    id = "d_n1",
+                    noteId = "n1",
+                    startedAt = 1_000L,
+                    finishedAt = null,
+                    estimatedRounds = maxRounds,
+                    roundsJson = roundsJson,
+                )
+            )
+        )
+    }
+
+    /**
+     * 真机反馈：「多了几轮后，会闪现出『写成文章』的弹窗，然后又消失，
+     * 继续出现回复框。」
+     *
+     * 根因：答满上限的那一刻 `completedRounds >= maxRounds` 成立、
+     * `pendingQuestion` 还是空 → 收尾卡出现；随后第 6 个问题流进来
+     * → `pendingQuestion` 非空 → 卡片被撤掉。一进一出就是「闪一下」。
+     *
+     * 修法不是藏卡片，而是**让上限真的生效**：答满就收尾，不再问下一个。
+     */
+    @Test
+    fun `答满轮数就直接收尾不再追问`() = runTest {
+        seedNote()
+        seedDeepening(
+            maxRounds = 2,
+            roundsJson = """[{"q":"问题一","a":"回答一"},{"q":"问题二","a":null}]""",
+        )
+        ai.questionScript = listOf("这个问题不该被问出来")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("回答二")
+
+        val s = vm.state.value
+        assertEquals("两轮都答过", 2, s.completedRounds)
+        assertTrue("答满上限就该收尾", s.finished)
+        assertNull("不该再挂着一个待答问题", s.pendingQuestion)
+        assertTrue("收尾卡必须出现", s.showFinishCard)
+        assertEquals(
+            "答满上限后不应该再花一次 API 调用",
+            0,
+            ai.captured.count { it.stage == FakeAiService.Stage.PROBE },
+        )
+    }
+
+    @Test
+    fun `重新进入答满上限的会话时不再自动追问`() = runTest {
+        seedNote()
+        seedDeepening(
+            maxRounds = 2,
+            roundsJson = """[{"q":"问题一","a":"回答一"},{"q":"问题二","a":"回答二"}]""",
+        )
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        val s = vm.state.value
+        assertTrue("轮数用完的会话等于结束了", s.finished)
+        assertTrue("要能直接去成文", s.showFinishCard)
+        assertEquals("不该自动问第 3 个问题", 0, ai.captured.size)
+    }
+
+    // ---------- 改说过的话 ----------
+
+    /**
+     * 真机反馈：「继续点『编辑』，只对最开始的记录编辑，
+     * 缺乏对 AI 问题的回答的编辑。」
+     */
+    @Test
+    fun `改过的回答会替换原话并落库`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题一", "问题二")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("然后就那个啥，卡住了")
+        vm.updateAnswer(0, "讲到第二页时，我脑子里突然一片空白")
+
+        assertEquals(
+            "界面上的回答要立刻换掉",
+            "讲到第二页时，我脑子里突然一片空白",
+            vm.state.value.rounds[0].answer,
+        )
+
+        val vm2 = DeepeningViewModel(repo, ai, probeStore)
+        vm2.load("n1")
+        assertEquals(
+            "改完必须落库，重新进来还是新的说法",
+            "讲到第二页时，我脑子里突然一片空白",
+            vm2.state.value.rounds[0].answer,
+        )
+    }
+
+    @Test
+    fun `改回答不会动别的轮次`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题一", "问题二", "问题三")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("回答一")
+        vm.send("回答二")
+        vm.updateAnswer(1, "回答二改过了")
+
+        val s = vm.state.value
+        assertEquals("第一轮不受影响", "回答一", s.rounds[0].answer)
+        assertEquals("第二轮是改后的", "回答二改过了", s.rounds[1].answer)
+        assertEquals("问题本身不该被改", "问题二", s.rounds[1].question)
+    }
+
+    @Test
+    fun `空回答不能覆盖原话`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题一", "问题二")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+        vm.send("回答一")
+        vm.updateAnswer(0, "   ")
+
+        assertEquals("清空输入框不算修改", "回答一", vm.state.value.rounds[0].answer)
     }
 
     // ---------- 成文 → 转选题 ----------

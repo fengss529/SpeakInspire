@@ -26,6 +26,7 @@ class DeepeningUiStateTest {
         answeredCount: Int = 0,
         maxRounds: Int = 5,
         finished: Boolean = false,
+        busy: Boolean = false,
     ) = DeepeningUiState(
         noteId = "n1",
         noteTitle = "标题",
@@ -35,6 +36,7 @@ class DeepeningUiStateTest {
         answeredCount = answeredCount,
         maxRounds = maxRounds,
         finished = finished,
+        busy = busy,
     )
 
     // ---------- 规则1：进度点 ----------
@@ -112,12 +114,60 @@ class DeepeningUiStateTest {
     fun `达到上限轮次时可收尾`() {
         val rounds = (1..5).map { Round("问$it", "答$it") }
         val s = state(rounds = rounds, answeredCount = 5, maxRounds = 5)
-        assertTrue("答满 5 轮应显示收尾卡", s.completedRounds >= s.maxRounds)
+        assertTrue("答满 5 轮应显示收尾卡", s.showFinishCard)
     }
 
     @Test
     fun `主动收尾后标记 finished`() {
         assertTrue(state(finished = true).finished)
+    }
+
+    // ---------- 收尾卡什么时候出现 ----------
+
+    /**
+     * 真机反馈：「多了几轮后，会闪现出『写成文章』的弹窗，然后又消失。」
+     *
+     * 触发条件是「答满轮数」+「没有待答问题」。用户答完第 5 轮那一刻
+     * 两条同时成立，卡片出现；下一个问题流进来后待答问题非空，
+     * 卡片又消失。所以判定里必须排除 busy / streaming——
+     * **只要模型还在吐字，就还不算「你说完了」。**
+     */
+    @Test
+    fun `AI 还在想下一个问题时不出收尾卡`() {
+        val rounds = (1..5).map { Round("问$it", "答$it") }
+        val s = state(rounds = rounds, answeredCount = 5, maxRounds = 5, busy = true)
+        assertFalse("忙的时候给出收尾卡，下一秒就得收回——那就是闪", s.showFinishCard)
+    }
+
+    @Test
+    fun `正在吐字时不出收尾卡`() {
+        val rounds = (1..5).map { Round("问$it", "答$it") }
+        val s = state(
+            rounds = rounds,
+            answeredCount = 5,
+            maxRounds = 5,
+            streaming = "第六个",
+        )
+        assertFalse(s.showFinishCard)
+    }
+
+    @Test
+    fun `有问题待答时不出收尾卡`() {
+        val rounds = (1..5).map { Round("问$it", "答$it") } + Round("第六问？", null)
+        val s = state(rounds = rounds, answeredCount = 5, maxRounds = 5)
+        assertFalse("一边宣布说完了、一边摆着要回答的问题，是在说两句话", s.showFinishCard)
+    }
+
+    @Test
+    fun `用户主动收尾后立刻出收尾卡`() {
+        val s = state(rounds = listOf(Round("问？", "答")), finished = true)
+        assertTrue(s.showFinishCard)
+    }
+
+    @Test
+    fun `还没答满也没收尾时不出收尾卡`() {
+        val s = state(rounds = listOf(Round("问？", "答")), answeredCount = 1, maxRounds = 5)
+        assertFalse(s.showFinishCard)
     }
 
     // ---------- 轮次拍平（发给 AI 的顺序） ----------

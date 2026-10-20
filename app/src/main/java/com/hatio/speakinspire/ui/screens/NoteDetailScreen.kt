@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Round
@@ -138,12 +139,23 @@ fun NoteDetailScreen(
                         // 必须取 .size。直接插值 List 会把整个 toString() 打进界面——
                         // 之前追问从来没成功过、rounds 恒为空，
                         // 所以这一行直到第一次真正聊完才暴露出问题。
-                        text = "已追问 ${rounds.size} 轮",
+                        //
+                        // 只数答过的：未答的那一轮是他没说的话，
+                        // 算进去会让他以为「我聊了 5 轮」其实只有 4 轮。
+                        text = "已追问 ${rounds.count { it.answered }} 轮",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline,
                     )
                     Spacer(Modifier.height(Spacing.s))
-                    rounds.filter { it.answered }.takeLast(2).forEach { r ->
+                    // **全部都列出来，不是只留最后两条。**
+                    //
+                    // 之前是 `takeLast(2)`，而且不带 AI 的问题。
+                    // 真机反馈「再打开时追问的记录丢失」有一半是这个观感：
+                    // 明明聊了五轮，页面上只剩两句孤零零的话，
+                    // 不知道在回答什么，也看不出聊过多少。
+                    //
+                    // 这里只做摘要：每条回答最多 3 行，完整问答在追问页里。
+                    rounds.filter { it.answered }.forEach { r ->
                         Row(
                             Modifier.padding(vertical = 3.dp),
                             verticalAlignment = Alignment.Top,
@@ -161,6 +173,8 @@ fun NoteDetailScreen(
                                 fontSize = 13.sp,
                                 lineHeight = 20.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }

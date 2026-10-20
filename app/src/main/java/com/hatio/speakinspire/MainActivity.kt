@@ -297,6 +297,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 },
                 onRetry = { dvm.retryFirstQuestion() },
                 onReopen = { dvm.reopen() },
+                // 改一句自己说过的话。下标指的是它在 rounds 里的位置
+                onUpdateAnswer = { index, text -> dvm.updateAnswer(index, text) },
+                // 改最初那条记录。追问页里直接给入口，
+                // 不必退出去详情页找——用户此刻正好知道该改哪句
+                onEditOrigin = { route = Route.Edit(r.noteId) },
             )
         }
 

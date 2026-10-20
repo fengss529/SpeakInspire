@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.Note
@@ -17,12 +18,38 @@ import kotlinx.coroutines.flow.Flow
  *
  * **note 表刻意不提供 status 的读写**——状态全部由 [com.hatio.speakinspire.domain.IdeaStateDeriver]
  * 从关联数据算出。DAO 里若出现 `UPDATE note SET status=...` 就是设计被破坏了。
+ *
+ * ## ⚠️ 有子表的实体一律用 [Upsert]，绝不能用 `@Insert(onConflict = REPLACE)`
+ *
+ * 这一条是用用户数据换来的，不要改回去。
+ *
+ * `INSERT OR REPLACE` 在 SQLite 里的真实语义是 **先 DELETE 再 INSERT**。
+ * 而 Room 生成的 `_Impl` 在 `onOpen` 里执行 `PRAGMA foreign_keys = ON`
+ * （见 `SpeakInspireDatabase_Impl.java`），所以那次 DELETE 会触发
+ * 子表的 `ON DELETE CASCADE`——**父行改一个字，子表整个清空**。
+ *
+ * 实测后果（真机反馈的两个 bug 是同一件事）：
+ * - 用户点「编辑」改原始记录 → `updateNote` → note 行被 REPLACE
+ *   → `deepening` 级联删除 → **追问过的所有问答消失**，再打开像从没聊过
+ * - 文章 id 是确定性的 `a_$noteId`，重新成文保存 → `article` 行被 REPLACE
+ *   → `script` 级联删除 → **选题凭空不见了**
+ *
+ * [Upsert] 走的是 `INSERT ... ON CONFLICT DO UPDATE`（低版本退化为
+ * INSERT+UPDATE），全程不删行，因此不会触发级联。
+ *
+ * 唯一保留 REPLACE 的是 [NoteDao.trash]：`trashed` 没有子表，且语义就是覆盖。
  */
 
 @Dao
 interface NoteDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * 新建与改名共用。
+     *
+     * **必须是 [Upsert]**：改成 REPLACE 会在改名时把这条 note
+     * 的追问、文章、选题一起级联删掉（见文件头）。
+     */
+    @Upsert
     suspend fun upsert(note: NoteEntity)
 
     @Query("SELECT * FROM note WHERE id = :id")
@@ -63,7 +90,8 @@ interface NoteDao {
 @Dao
 interface DeepeningDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /** 会话只有一条（id 固定为 `d_$noteId`），整条覆盖是正确语义——但不能用 REPLACE */
+    @Upsert
     suspend fun upsert(entity: DeepeningEntity)
 
     @Query("SELECT * FROM deepening WHERE noteId = :noteId ORDER BY startedAt DESC")
@@ -83,7 +111,14 @@ interface DeepeningDao {
 @Dao
 interface ArticleDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /**
+     * ⚠️ 这里曾经是 REPLACE。
+     *
+     * 文章 id 是确定性的 `a_$noteId`，所以「重新成文 → 保存」
+     * 等于 REPLACE 一条已存在的 article 行 → 级联删掉 `script`
+     * → 用户看着选题存好了，回选题 tab 却什么都没有。
+     */
+    @Upsert
     suspend fun upsert(entity: ArticleEntity)
 
     @Query("SELECT * FROM article WHERE noteId = :noteId LIMIT 1")
@@ -102,7 +137,7 @@ interface ArticleDao {
 @Dao
 interface ScriptDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsert(entity: ScriptEntity)
 
     @Query("SELECT * FROM script WHERE articleId = :articleId ORDER BY createdAt DESC")
@@ -143,7 +178,7 @@ interface ScriptDao {
 @Dao
 interface ProviderDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun upsert(entity: ProviderEntity)
 
     @Query("SELECT * FROM provider WHERE active = 1 LIMIT 1")

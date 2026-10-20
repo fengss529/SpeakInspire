@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,12 +33,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,7 +79,7 @@ import com.hatio.speakinspire.ui.theme.Spacing
  * 历史轮次折叠成一行，显示**用户原话**而不是 AI 的问题——
  * 因为用户记得的是自己说过什么。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DeepeningScreen(
     state: DeepeningUiState,
@@ -92,15 +98,45 @@ fun DeepeningScreen(
      * 成文页说「回去再聊聊」，回去必须真的能聊。
      */
     onReopen: () -> Unit = {},
+    /** 改一句已经说过的话。参数是它在 rounds 里的下标 */
+    onUpdateAnswer: (Int, String) -> Unit = { _, _ -> },
+    /** 编辑最初那条随手记（走详情页的编辑流程） */
+    onEditOrigin: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
     val inputFocus = remember { FocusRequester() }
 
-    // 有新内容时滚到底部
-    LaunchedEffect(state.rounds.size, state.streaming) {
-        val last = listState.layoutInfo.totalItemsCount - 1
-        if (last >= 0) listState.animateScrollToItem(last)
+    // 正在改的那一句（rounds 下标）。null = 没在改
+    var editingRound by remember { mutableStateOf<Int?>(null) }
+
+    // 键盘是否弹起。它是**列表需要重新贴底**的信号，见下面的滚动 effect
+    val imeVisible = WindowInsets.isImeVisible
+
+    /**
+     * 有新内容、键盘弹起/收起、或换了待答问题 → 滚到最新一条。
+     *
+     * ## 键盘遮挡最新提问的根因
+     *
+     * 不是缺 `imePadding()`（输入栏本来就有），而是**列表没有跟着重新贴底**。
+     * 键盘占掉屏幕下半部分后，LazyColumn 的可视高度变小，
+     * 但它仍然锚定原来那一项——底部被吃掉的那段就直接切掉，
+     * 而最新的问题恰好排在最底下。于是用户看到的是：
+     * 键盘一弹，刚刚 AI 问的那句话正好被盖住。
+     *
+     * 所以这里把 `imeVisible` 也作为触发条件，并且**等一帧**
+     * 再算 item 数量——effect 刚启动时 layoutInfo 还是上一帧的，
+     * 直接读会读到 0，滚动就静默失效。
+     */
+    LaunchedEffect(
+        state.rounds.size,
+        state.streaming,
+        state.pendingQuestion,
+        imeVisible,
+    ) {
+        withFrameNanos { }
+        val total = listState.layoutInfo.totalItemsCount
+        if (total > 0) listState.animateScrollToItem(total - 1)
     }
 
     /**
@@ -204,7 +240,16 @@ fun DeepeningScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // 把 padding 已经用掉的那部分 insets 声明为「已消费」，
+                // 否则下面的 imePadding 会把导航栏高度再算一遍，
+                // 键盘上方多出一条空白
+                .consumeWindowInsets(padding)
+                // 整个内容区（列表 + 输入栏）一起抬到键盘之上。
+                //
+                // 之前只给输入栏加 imePadding：输入栏浮起来了，
+                // 列表还是原来的高度，两者互相重叠，最新的问题被压在键盘后面。
+                .imePadding(),
         ) {
             LazyColumn(
                 state = listState,
@@ -218,7 +263,7 @@ fun DeepeningScreen(
                 // 原始笔记置顶，只展示一次
                 if (state.noteBody.isNotBlank()) {
                     item("origin") {
-                        OriginCard(state.noteBody)
+                        OriginCard(body = state.noteBody, onEdit = onEditOrigin)
                     }
                 }
 
@@ -274,14 +319,20 @@ fun DeepeningScreen(
                 //
                 // 真机反馈的「点回去再聊时 App 退出」就发生在这条路径上：
                 // 从成文页跳回追问页，重新组合列表，key 撞了就崩。
-                val answered = state.rounds.filter { it.answered }
+                // 带上它在 rounds 里的**原始下标**。
+                //
+                // 改答案时要改对那一轮；用「第几个已回答」当坐标，
+                // 一旦中间夹着未答轮次（收尾前的残渣、流式中断）
+                // 就会改到错误的那句话上。
+                val answered = state.rounds.withIndex().filter { it.value.answered }
                 itemsIndexed(
                     answered,
-                    key = { index, _ -> "turn_$index" },
-                ) { _, round ->
+                    key = { _, entry -> "turn_${entry.index}" },
+                ) { _, entry ->
                     HistoryTurn(
-                        question = round.question,
-                        answer = round.answer.orEmpty(),
+                        question = entry.value.question,
+                        answer = entry.value.answer.orEmpty(),
+                        onEdit = { editingRound = entry.index },
                     )
                 }
 
@@ -321,11 +372,11 @@ fun DeepeningScreen(
 
                 // 收尾卡。
                 //
-                // **有问题在等回答时不出现**：AI 刚问完一句，界面却宣布
+                // 判定收在 DeepeningUiState.showFinishCard 里，不在这儿拼条件——
+                // 那里排除了 busy / streaming，卡片才不会「闪一下又消失」。
+                // 有问题在等回答时同样不出现：AI 刚问完一句，界面却宣布
                 // 「你说完了」，然后下面摆着输入框——那是在跟用户说两句话。
-                // 等这一轮答完（pendingQuestion 为空）卡片再出来。
-                val hasPending = state.pendingQuestion != null
-                if ((state.finished || state.completedRounds >= state.maxRounds) && !hasPending) {
+                if (state.showFinishCard) {
                     item("finish") {
                         FinishCard(
                             composing = state.composing,
@@ -385,13 +436,82 @@ fun DeepeningScreen(
             }
         }
     }
+
+    // 改一句话的弹窗。
+    //
+    // 放在 Scaffold 之外：它是覆盖层，不该参与页面布局，
+    // 也不该因为列表滚动而重新测量。
+    editingRound?.let { idx ->
+        val original = state.rounds.getOrNull(idx)?.answer.orEmpty()
+        AnswerEditDialog(
+            initial = original,
+            onDismiss = { editingRound = null },
+            onConfirm = { text ->
+                onUpdateAnswer(idx, text)
+                editingRound = null
+            },
+        )
+    }
+}
+
+/**
+ * 改一句自己说过的话。
+ *
+ * 只有一个输入框和两个按钮——不做富文本、不做历史版本。
+ * 用户要的是「把这句话说顺一点」，不是编辑器。
+ */
+@Composable
+private fun AnswerEditDialog(
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var text by remember(initial) { mutableStateOf(initial) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("改这句话", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "改完之后，成文用的是新的说法。",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+                Spacer(Modifier.height(Spacing.s))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(text) },
+                enabled = text.isNotBlank() && text.trim() != initial.trim(),
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 /**
  * 原始笔记。灰色底，表示「这是起点」
+ *
+ * 右上角留一个「编辑」：追问聊到一半发现最初那句记错了，
+ * 不该逼用户退出去找详情页——他这时候正好知道该改哪里。
  */
 @Composable
-private fun OriginCard(body: String) {
+private fun OriginCard(body: String, onEdit: () -> Unit = {}) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -399,11 +519,26 @@ private fun OriginCard(body: String) {
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
             .padding(Spacing.m),
     ) {
-        Text(
-            text = "你随手记的",
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "你随手记的",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "编辑",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onEdit)
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+            )
+        }
         Spacer(Modifier.height(4.dp))
         Text(
             text = body,
@@ -437,7 +572,12 @@ private fun OriginCard(body: String) {
  * 但可读性不能降——它存在的意义就是让人回看。
  */
 @Composable
-private fun HistoryTurn(question: String, answer: String) {
+private fun HistoryTurn(
+    question: String,
+    answer: String,
+    /** 点「改」时回调。答案在历史里不是只读的——见 AnswerEditDialog */
+    onEdit: (() -> Unit)? = null,
+) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -492,16 +632,38 @@ private fun HistoryTurn(question: String, answer: String) {
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
                     .padding(horizontal = 12.dp, vertical = 9.dp),
             ) {
-                Text(
-                    text = answer,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    // 有人一句话能说几百字。历史里留 8 行足够辨认，
-                    // 再多就把页面顶到很远——要回看原文可以去成文页
-                    maxLines = 8,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Column {
+                    Text(
+                        text = answer,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        // 有人一句话能说几百字。历史里留 8 行足够辨认，
+                        // 再多就把页面顶到很远——要回看原文可以去成文页
+                        maxLines = 8,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    // 「改」挂在气泡内右下角。
+                    //
+                    // 不放图标：这个 App 的用词都很直白，
+                    // 一个铅笔图标反而要多想一秒才敢点。
+                    if (onEdit != null) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            Text(
+                                text = "改",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(onClick = onEdit)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -682,8 +844,8 @@ private fun InputBar(
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .imePadding()
-            .navigationBarsPadding()
+            // imePadding / navigationBarsPadding 已经移到外层 Column——
+            // 只抬输入栏会把列表留在键盘后面
             .padding(Spacing.m),
         verticalAlignment = Alignment.Bottom,
     ) {

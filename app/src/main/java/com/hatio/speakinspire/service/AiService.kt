@@ -185,10 +185,20 @@ data class DeepeningContext(
     /** 已经答完的轮数 */
     val answeredRounds: Int get() = rounds.count { it.isUser }
 
-    /** 用户实际说过的字数（去空白）。成文阶段判断素材是否足够 */
+    /**
+     * 用户实际说过的字数（去空白）。成文阶段判断素材是否足够。
+     *
+     * **必须把 [originalNote] 算进来。**
+     *
+     * 之前只数 `rounds` 里的回答。于是「随手记了 500 字、只答了两轮」
+     * 这种最有内容的记录反而被判成素材不足——用户明明写了一大段，
+     * App 告诉他「你聊得太少了」。这条规则错得很隐蔽：
+     * 它惩罚的正是认真记录的人。
+     */
     val materialSize: Int
-        get() = rounds.filter { it.isUser }
-            .sumOf { it.content.count { c -> !c.isWhitespace() } }
+        get() = originalNote.count { c -> !c.isWhitespace() } +
+            rounds.filter { it.isUser }
+                .sumOf { it.content.count { c -> !c.isWhitespace() } }
 
     /** 是否为最后一轮 */
     val isLastRound: Boolean get() = roundIndex >= maxRounds - 1

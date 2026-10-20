@@ -377,7 +377,8 @@ class RealAiServiceTest {
     /**
      * 足量素材。
      *
-     * 成文现在会在本地先数字数，不足 300 直接拒稿、不发请求。
+     * 成文会先在本地数字数（原始记录 + 回答），低于
+     * [com.hatio.speakinspire.service.ThinMaterial.THRESHOLD] 直接拒稿、不发请求。
      * 所以凡是要测「请求长什么样」的用例，都必须先喂够字数，
      * 否则连 transport 都不会被调用。
      */
@@ -532,8 +533,57 @@ class RealAiServiceTest {
             ctx(listOf(ChatMessage.user("hhhh"), ChatMessage.ai("怕什么？")))
         )
         assertTrue(r is ComposeResult.Rejected)
-        assertEquals(4, (r as ComposeResult.Rejected).actualChars)
+        // 原始记录「原始内容」也算素材，所以是 4 + 4
+        assertEquals(8, (r as ComposeResult.Rejected).actualChars)
         assertTrue("拒稿不该花一次 API 调用：${t.lastBody}", t.lastBody.isEmpty())
+    }
+
+    /**
+     * 真机反馈：「短一些的感悟，也可以成短文」。
+     *
+     * 原来只数追问里的回答，原始记录一个字不算——
+     * 于是记得最长的那种记录反而最容易被判素材不足。
+     * 这条守着「随手记的内容也是素材」。
+     */
+    @Test
+    fun `随手记的原始记录也算成文素材`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse =
+            """{"choices":[{"message":{"content":"{\"title\":\"T\",\"paragraphs\":[{\"text\":\"x\",\"isMine\":true}]}"}}]}"""
+        val ctx = DeepeningContext(
+            noteId = "n1",
+            originalNote = "我".repeat(200),
+            rounds = listOf(ChatMessage.ai("当时呢？")),
+            roundIndex = 0,
+            maxRounds = 5,
+        )
+        val r = service(t).composeArticle(ctx)
+        assertTrue("原始记录够长就该成文，不该拒稿", r is ComposeResult.Success)
+    }
+
+    /**
+     * 成文请求必须把原始记录发出去。
+     *
+     * 素材计数把它算进来了，请求里却不带——「够字数」和
+     * 「模型手里真有那段话」就成了两件事。
+     */
+    @Test
+    fun `成文请求里带上随手记的原始记录`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse =
+            """{"choices":[{"message":{"content":"{\"title\":\"T\",\"paragraphs\":[{\"text\":\"x\",\"isMine\":true}]}"}}]}"""
+        val ctx = DeepeningContext(
+            noteId = "n1",
+            originalNote = "我在部门会上讲第二页时突然大脑空白",
+            rounds = listOf(ChatMessage.ai("当时呢？"), ChatMessage.user("我".repeat(80))),
+            roundIndex = 1,
+            maxRounds = 5,
+        )
+        service(t).composeArticle(ctx)
+        assertTrue(
+            "原始记录必须进 messages：${t.lastBody.take(200)}",
+            t.lastBody.contains("突然大脑空白"),
+        )
     }
 
     @Test

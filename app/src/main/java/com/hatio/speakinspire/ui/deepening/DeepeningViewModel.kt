@@ -83,23 +83,33 @@ class DeepeningViewModel @Inject constructor(
             // 读进来先清掉，否则会在库里越积越多
             rounds = rounds.dropLastWhile { it.question.isBlank() && !it.answered }
 
+            val maxRounds = deepening?.estimatedRounds ?: DEFAULT_MAX_ROUNDS
+            val answered = rounds.count { it.answered }
+
+            // 轮数已经用到上限 → 会话事实上结束了。
+            //
+            // 之前这里只看 `finishedAt`，于是「答满 5 轮但没点收尾」的记录
+            // 重新打开时还会再问第 6 个问题——上限形同虚设，
+            // 而且用户看到的收尾卡会随着新问题到达一闪就没。
+            val capped = answered >= maxRounds
+
             _state.value = DeepeningUiState(
                 noteId = noteId,
                 noteTitle = idea.note.title,
                 noteBody = idea.note.body,
                 rounds = rounds,
-                finished = deepening?.finishedAt != null,
-                answeredCount = rounds.count { it.answered },
-                maxRounds = deepening?.estimatedRounds ?: DEFAULT_MAX_ROUNDS,
+                finished = deepening?.finishedAt != null || capped,
+                answeredCount = answered,
+                maxRounds = maxRounds,
                 errorMessage = null,
                 // 每次进来读一次：用户可能在设置里换了问法，
                 // 下次进来就该按新方法问
                 probeMethod = probeStore.current(),
             )
 
-            // 会话已收尾（已成文或用户主动结束）就不再自动问
+            // 会话已收尾（已成文、用户主动结束、或轮数用尽）就不再自动问
             if (deepening?.finishedAt != null) return@launch
-            if (rounds.count { it.answered } >= _state.value.maxRounds) return@launch
+            if (capped) return@launch
 
             val last = rounds.lastOrNull()
             when {
@@ -212,13 +222,36 @@ class DeepeningViewModel @Inject constructor(
 
         val nextRounds = base.rounds.dropLast(1) +
             base.rounds.last().copy(answer = userText)
+        val answeredNow = nextRounds.count { it.answered }
+
+        // 答满上限 → 不再问下一个，直接收尾。
+        //
+        // **这就是「写成文章」弹窗闪现又消失的根因。**
+        // 之前这里无条件再问一个：答完第 5 轮的瞬间
+        // `completedRounds >= maxRounds` 成立、而 `pendingQuestion` 还是空，
+        // 收尾卡于是出现；等第 6 个问题流进来，`pendingQuestion` 非空，
+        // 卡片又被撤掉。用户看到的就是「闪一下，然后继续出现回复框」。
+        //
+        // 上限本来就该是上限——到点就结束，而不是虚设一个数字然后接着问。
+        if (answeredNow >= base.maxRounds) {
+            _state.value = base.copy(
+                rounds = nextRounds,
+                streaming = "",
+                busy = false,
+                finished = true,
+                answeredCount = answeredNow,
+                errorMessage = null,
+            )
+            viewModelScope.launch { persist(base.noteId, nextRounds, finished = true) }
+            return
+        }
 
         _state.value = base.copy(
             rounds = nextRounds,
             streaming = "",
             busy = true,
             // 关键：用户发送即点亮，不是等 AI 问完
-            answeredCount = nextRounds.count { it.answered },
+            answeredCount = answeredNow,
             errorMessage = null,
         )
 
@@ -289,6 +322,42 @@ class DeepeningViewModel @Inject constructor(
     }
 
     /**
+     * 改一句已经说过的话。
+     *
+     * ## 为什么需要
+     *
+     * 追问页只有一个输入框，历史轮次是**只读**的。于是用户在追问之后
+     * 想修一句话，唯一能找到的「编辑」按钮在详情页——它改的是最初那条
+     * 随手记。真机反馈原话：
+     * 「继续点『编辑』，只对最开始的记录编辑，缺乏对 AI 问题的回答的编辑。」
+     *
+     * 而已经说出口的解释恰恰最需要改：口语化的句子落到文章里会很别扭，
+     * 用户自己读一遍就知道哪句该修。不给他改的入口，成文页的「来源」
+     * 标注就永远是「你当时随口说的」而不是「你想说的」。
+     *
+     * [roundIndex] 是**在 rounds 里的下标**，不是「第几个已回答」——
+     * 中间可能夹着未答轮次，混用会导致改错一句。
+     */
+    fun updateAnswer(roundIndex: Int, text: String) {
+        val current = _state.value
+        val trimmed = text.trim()
+        val target = current.rounds.getOrNull(roundIndex) ?: return
+        if (trimmed.isEmpty() || !target.answered || trimmed == target.answer) return
+
+        val next = current.rounds.toMutableList().also {
+            it[roundIndex] = target.copy(answer = trimmed)
+        }
+        _state.value = current.copy(
+            rounds = next,
+            answeredCount = next.count { r -> r.answered },
+        )
+        viewModelScope.launch {
+            // 保持 finished 状态不变——改一个字不该把已收尾的会话重新打开
+            persist(current.noteId, next, finished = current.finished)
+        }
+    }
+
+    /**
      * 提前收尾。用户不想聊了但保留已说的。
      *
      * **末尾那个没回答的问题要一起丢掉。**
@@ -328,11 +397,20 @@ class DeepeningViewModel @Inject constructor(
      * 所以收尾之后必须留一道能回来的门。用户自己结束的，
      * 也应该是他自己能重新打开——这和「结束追问是用户的权利」
      * 是同一条原则的另一半。
+     *
+     * ## 顺手把上限往上放一格
+     *
+     * 轮数上限的作用是「别让对话无限拖下去」，不是「到点锁死」。
+     * 用户主动说「还没说完」，就是明确表示他愿意再聊一轮——
+     * 这时候仍然卡在第 5 轮，点进来会立刻又被收尾卡顶回去，
+     * 那个按钮就成了假的。
      */
     fun reopen() {
         val current = _state.value
         viewModelScope.launch {
             val rounds = current.rounds
+            // 用户想继续 → 上限至少放宽到「现在这轮 + 1」
+            val extended = maxOf(current.maxRounds, current.completedRounds + 1)
             if (rounds.any { it.answered }) {
                 repo.saveDeepening(
                     Deepening(
@@ -342,12 +420,13 @@ class DeepeningViewModel @Inject constructor(
                         startedAt = System.currentTimeMillis(),
                         // 清掉收尾时间：会话重新成为「进行中」
                         finishedAt = null,
-                        estimatedRounds = current.maxRounds,
+                        estimatedRounds = extended,
                     )
                 )
             }
             _state.value = current.copy(
                 finished = false,
+                maxRounds = extended,
                 // 最后一轮如果是待答的问题，直接把焦点打回输入框
                 focusTick = current.focusTick + 1,
             )
@@ -455,6 +534,26 @@ data class DeepeningUiState(
         get() = rounds.lastOrNull()
             ?.takeIf { !it.answered && it.question.isNotBlank() }
             ?.question
+
+    /**
+     * 收尾卡该不该出现。
+     *
+     * ## 必须排除 busy / streaming
+     *
+     * 之前只看「已收尾或答满轮数」+「没有待答问题」。
+     * 用户答完第 5 轮的那一瞬间两条都成立 → 卡片出现；
+     * 第 6 个问题流进来后 `pendingQuestion` 非空 → 卡片又被撤掉。
+     * 真机反馈的「闪现出『写成文章』的弹窗，然后又消失，
+     * 继续出现回复框」就是这么来的。
+     *
+     * 现在 `send()` 在答满轮数时直接收尾，这里是第二道闸：
+     * 只要模型还在吐字，就还不算「你说完了」——不能先给结论再改口。
+     */
+    val showFinishCard: Boolean
+        get() = (finished || completedRounds >= maxRounds) &&
+            pendingQuestion == null &&
+            !busy &&
+            streaming.isBlank()
 
     /** 最后一轮之后不再显示新的 AI 气泡（有正在流的也算） */
     val showTypingBubble: Boolean get() = streaming.isNotEmpty()

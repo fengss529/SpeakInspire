@@ -110,7 +110,12 @@ class FakeAiService : AiService {
         )
 
         if (forceThinMaterial) {
-            return ComposeResult.Rejected(actualChars = 180, requiredChars = THIN_MATERIAL)
+            // 字数取一个**低于门槛**的值。写死 180 在门槛降到 60 之后
+            // 就变成了「素材够却拒稿」的自相矛盾样本
+            return ComposeResult.Rejected(
+                actualChars = THIN_MATERIAL / 3,
+                requiredChars = THIN_MATERIAL,
+            )
         }
 
         val paragraphs = draftParagraphs.ifEmpty {
@@ -142,7 +147,13 @@ class FakeAiService : AiService {
     }
 
     companion object {
-        /** 成文素材下限：低于此字数应拒稿 */
-        const val THIN_MATERIAL = 300
+        /**
+         * 成文素材下限：低于此字数应拒稿。
+         *
+         * 直接引用 [ThinMaterial.THRESHOLD]，两处不能各写一个数字——
+         * 门槛调过一次之后，Fake 里写死的旧值会让「素材不足」的测试
+         * 变成在测一个不存在的边界。
+         */
+        const val THIN_MATERIAL = ThinMaterial.THRESHOLD
     }
 }

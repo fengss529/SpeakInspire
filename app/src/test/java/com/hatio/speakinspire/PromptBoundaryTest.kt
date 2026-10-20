@@ -3,6 +3,7 @@ package com.hatio.speakinspire
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.service.DeepeningContext
 import com.hatio.speakinspire.service.Prompts
+import com.hatio.speakinspire.service.ThinMaterial
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -93,6 +94,23 @@ class PromptBoundaryTest {
         assertTrue(p.contains("只输出一个开放式问题"))
     }
 
+    /**
+     * 真机反馈：「AI 追问的问题有点水，没有结合记录和之后的回答，
+     * 只是针对当前问题的一个追问」。
+     *
+     * 光在 prompt 里写「要结合上下文」没用——模型会照旧问
+     * 「你能具体说说吗」。必须给它一个**可判断的标准**
+     * 和一组能对照的反面例子。
+     */
+    @Test
+    fun `追问 prompt 要求贴着用户的原话问`() {
+        val p = Prompts.PROBE_SYSTEM_PROMPT
+        assertTrue("必须给出可判断的标准", p.contains("把他那句原话遮住"))
+        assertTrue("必须列出「白问」的反面例子", p.contains("换成任何话题都能问"))
+        assertTrue("必须明确要带上最初那句记录", p.contains("最初随手记"))
+        assertTrue("必须提示前后矛盾处才是好问题", p.contains("讲得不一样"))
+    }
+
     // ---------- 成文阶段：允许补位，但守住立场 ----------
 
     @Test
@@ -121,9 +139,29 @@ class PromptBoundaryTest {
     @Test
     fun `成文 prompt 规定素材不足必须拒稿`() {
         val p = Prompts.DRAFT_SYSTEM_PROMPT
-        assertTrue("必须写明字数下限", p.contains("300"))
+        // 门槛数字直接引用 ThinMaterial.THRESHOLD，不写死——
+        // 两处写死过一次，prompt 里还留着 300 而代码已改成 60，
+        // 模型和后端各按各的数走
+        assertTrue(
+            "必须写明字数下限 ${ThinMaterial.THRESHOLD}",
+            p.contains(ThinMaterial.THRESHOLD.toString()),
+        )
         assertTrue("必须写明拒绝", p.contains("拒绝成稿"))
         assertTrue("必须禁止注水", p.contains("注水"))
+    }
+
+    /**
+     * 300 字的统一门槛已经去掉。
+     *
+     * 真机反馈：「短一些的感悟，也可以成短文」。
+     * 这条测试守着那个决策不被悄悄改回去——
+     * 一旦有人重新写死一个大数字，短感悟就又写不出来了。
+     */
+    @Test
+    fun `成文 prompt 不再设 300 字统一门槛`() {
+        val p = Prompts.DRAFT_SYSTEM_PROMPT
+        assertFalse("不能重新写死 300 字门槛", p.contains("300"))
+        assertTrue("必须说明长度跟着素材走", p.contains("跟着素材走"))
     }
 
     // ---------- 转选题阶段：绝不给逐字稿 ----------

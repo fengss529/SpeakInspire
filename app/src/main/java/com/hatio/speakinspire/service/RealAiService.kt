@@ -93,9 +93,20 @@ class RealAiService(
     }
 
     /**
-     * 成文的消息序列：**最后一条必须是用户**。
+     * 成文的消息序列：原始记录 + 所有问答，**最后一条必须是用户**。
      *
-     * ## 为什么
+     * ## 为什么要把原始记录放回来
+     *
+     * 之前只发 `context.rounds`。可用户最初那句随手记**根本不在 rounds 里**——
+     * 那是 note 表的内容。于是模型只看到「问题 + 回答」，
+     * 而回答常常是「嗯，就是那个」这种要靠上文才成立的句子。
+     * 更要紧的是：素材本来就少的人，反过来又少了开头那一大段。
+     *
+     * [DeepeningContext.materialSize] 既然把原始记录算进素材，
+     * 这里就必须真的发出去，否则「够字数了」和「模型手里有货」
+     * 是两件事，成文质量会莫名其妙地差。
+     *
+     * ## 为什么最后一条必须是用户
      *
      * 追问常常停在「AI 刚问完、用户还没答」的位置。
      * 这时候直接拿 rounds 拍平，`messages` 的最后一条是 `assistant`——
@@ -107,8 +118,12 @@ class RealAiService(
      * 模型不必猜「现在该干什么」——系统提示里说要成文，
      * 但对话看起来还在进行中。
      */
-    private fun composeMessages(rounds: List<ChatMessage>): List<ChatMessage> = buildList {
-        addAll(rounds)
+    private fun composeMessages(context: DeepeningContext): List<ChatMessage> = buildList {
+        val note = context.originalNote.trim()
+        if (note.isNotEmpty()) {
+            add(ChatMessage.user("我随手记下的想法：\n$note"))
+        }
+        addAll(context.rounds)
         if (lastOrNull()?.isUser != true) {
             add(ChatMessage.user("按上面的要求，把我说过的话整理成文章。只输出 JSON。"))
         }
@@ -136,7 +151,7 @@ class RealAiService(
             val body = RequestBuilder.compose(
                 cfg,
                 Prompts.DRAFT_SYSTEM_PROMPT,
-                composeMessages(context.rounds),
+                composeMessages(context),
             )
             val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
             val content = ResponseParser.extractContent(raw)
@@ -379,14 +394,29 @@ class RealAiService(
         }
 
     companion object {
-        /** 素材下限，与 FakeAiService 保持一致 */
-        const val THIN_MATERIAL = 300
+        /** 素材下限，与 [ThinMaterial.THRESHOLD] 保持一致 */
+        const val THIN_MATERIAL = ThinMaterial.THRESHOLD
     }
 }
 
-/** 成文素材不足时拒稿的阈值 */
+/**
+ * 成文素材不足时拒稿的阈值。
+ *
+ * ## 为什么从 300 降到 60
+ *
+ * 300 是「一篇公众号长文」的量，而这个 App 记的是**一句随感**。
+ * 用户随手记 40 字、聊三轮答了 80 字，加起来一百二十字——
+ * 完全写得出一篇三百字的短文。卡在 300 上，等于告诉他
+ * 「你的想法太短了，不值得写」。
+ *
+ * 60 的作用只剩一个：**别让模型在几乎空白的地基上编一篇出来**。
+ * 低于这个量，拼不出一个完整意思，那时候拒稿才是在保护他。
+ *
+ * 至于写长写短，交给 prompt（DRAFT_SYSTEM_PROMPT 的「长度跟着素材走」），
+ * 不在这里设第二个门槛。
+ */
 object ThinMaterial {
-    const val THRESHOLD = 300
+    const val THRESHOLD = 60
 }
 
 /**

@@ -111,8 +111,13 @@ class FakeAiServiceTest {
         fake.forceThinMaterial = true
         val r = fake.composeArticle(ctx(rounds = 2))
         assertTrue(r is ComposeResult.Rejected)
-        assertEquals(180, (r as ComposeResult.Rejected).actualChars)
-        assertEquals(300, r.requiredChars)
+        val rejected = r as ComposeResult.Rejected
+        assertEquals(FakeAiService.THIN_MATERIAL / 3, rejected.actualChars)
+        assertEquals(FakeAiService.THIN_MATERIAL, rejected.requiredChars)
+        assertTrue(
+            "拒稿样本的字数必须真的低于门槛，否则测的是一个不存在的边界",
+            rejected.actualChars < rejected.requiredChars,
+        )
     }
 
     @Test
