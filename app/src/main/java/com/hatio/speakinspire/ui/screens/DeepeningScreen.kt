@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -102,6 +103,21 @@ fun DeepeningScreen(
         if (last >= 0) listState.animateScrollToItem(last)
     }
 
+    /**
+     * 输入框是否会出现在这一帧里。
+     *
+     * **这个条件必须只有一处。** 它同时决定两件事：
+     * 底部要不要画 InputBar、自动聚焦能不能请求。
+     *
+     * 曾经两处各写各的（InputBar 用 `!finished`，聚焦不看条件），
+     * 结果从成文页点「回去再聊聊」时崩溃：
+     * ViewModel 被复用，`focusTick` 还留着上次的值（> 0），
+     * LaunchedEffect 重新启动就立刻 requestFocus——
+     * 可那时输入框根本没渲染，`Modifier.focusRequester()` 没有挂到任何节点上，
+     * Compose 抛 `IllegalStateException: FocusRequester is not initialized`。
+     */
+    val canInput = !state.finished || state.pendingQuestion != null
+
     // 有问题在等回答 → 自动弹键盘。
     //
     // 真机反馈的「点 AI 追问后卡住」有一半是这个：
@@ -111,8 +127,11 @@ fun DeepeningScreen(
     // 用递增的 focusTick 而不是布尔值：布尔值从 false 变 true 只触发一次，
     // 第二个问题到来时值没变，键盘就不会再弹。
     LaunchedEffect(state.focusTick) {
-        if (state.focusTick > 0) {
-            inputFocus.requestFocus()
+        if (state.focusTick > 0 && canInput) {
+            // 即便条件成立，也可能落在「节点还没挂上」的边界帧。
+            // 这不是需要处理的错误，只是一个还没准备好的请求——
+            // 让用户自己点一下，比让整个页面崩掉好。
+            runCatching { inputFocus.requestFocus() }
         }
     }
 
@@ -245,10 +264,21 @@ fun DeepeningScreen(
                 //
                 // 现在问题和回答都在，方向靠左右区分（左问右答），
                 // 视觉权重比当前这一轮轻，历史感保留。
-                items(
-                    state.rounds.filter { it.answered },
-                    key = { it.hashCode() },
-                ) { round ->
+                //
+                // ⚠️ key 用**下标**，不能用 `it.hashCode()`。
+                //
+                // Round 是 data class，hashCode 由 question + answer 算出来。
+                // 两轮内容完全一样时（同一句话说过两遍、或者模型问了同一个问题，
+                // 这在真实对话里很常见），hashCode 就相同——LazyColumn 遇到重复 key
+                // 会直接抛 IllegalArgumentException，整个页面崩掉。
+                //
+                // 真机反馈的「点回去再聊时 App 退出」就发生在这条路径上：
+                // 从成文页跳回追问页，重新组合列表，key 撞了就崩。
+                val answered = state.rounds.filter { it.answered }
+                itemsIndexed(
+                    answered,
+                    key = { index, _ -> "turn_$index" },
+                ) { _, round ->
                     HistoryTurn(
                         question = round.question,
                         answer = round.answer.orEmpty(),
@@ -323,7 +353,10 @@ fun DeepeningScreen(
             // 用户恰好点了「收尾」（那时 `skipTyping()` 把内容落地成待答轮次，
             // 同时 finished = true），于是界面上问题清清楚楚摆着，
             // 输入框却被 `!finished` 藏掉了——看着一个问题，打不了字。
-            if (!state.finished || state.pendingQuestion != null) {
+            //
+            // 条件和上方的自动聚焦共用 canInput，两处不能各写各的：
+            // 聚焦请求需要这里真的挂上 Modifier.focusRequester。
+            if (canInput) {
                 InputBar(
                     focusRequester = inputFocus,
                     value = input,
