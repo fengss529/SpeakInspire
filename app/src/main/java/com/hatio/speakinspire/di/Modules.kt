@@ -8,6 +8,7 @@ import com.hatio.speakinspire.data.local.NoteDao
 import com.hatio.speakinspire.data.local.ProviderDao
 import com.hatio.speakinspire.data.local.ScriptDao
 import com.hatio.speakinspire.data.local.SpeakInspireDatabase
+import com.hatio.speakinspire.data.local.SproutDao
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.HttpTransport
 import com.hatio.speakinspire.data.remote.OkHttpTransport
@@ -55,6 +56,7 @@ object DatabaseModule {
     @Provides fun provideArticleDao(db: SpeakInspireDatabase): ArticleDao = db.articleDao()
     @Provides fun provideScriptDao(db: SpeakInspireDatabase): ScriptDao = db.scriptDao()
     @Provides fun provideProviderDao(db: SpeakInspireDatabase): ProviderDao = db.providerDao()
+    @Provides fun provideSproutDao(db: SpeakInspireDatabase): SproutDao = db.sproutDao()
 
     @Provides
     @Singleton
@@ -63,7 +65,8 @@ object DatabaseModule {
         deepeningDao: DeepeningDao,
         articleDao: ArticleDao,
         scriptDao: ScriptDao,
-    ): IdeaRepository = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
+        sproutDao: SproutDao,
+    ): IdeaRepository = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, sproutDao)
 }
 
 /**

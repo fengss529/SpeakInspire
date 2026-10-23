@@ -13,8 +13,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ScriptEntity::class,
         TrashedEntity::class,
         ProviderEntity::class,
+        SproutEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class SpeakInspireDatabase : RoomDatabase() {
@@ -23,6 +24,7 @@ abstract class SpeakInspireDatabase : RoomDatabase() {
     abstract fun articleDao(): ArticleDao
     abstract fun scriptDao(): ScriptDao
     abstract fun providerDao(): ProviderDao
+    abstract fun sproutDao(): SproutDao
 
     companion object {
         const val NAME = "speakinspire.db"
@@ -64,6 +66,37 @@ abstract class SpeakInspireDatabase : RoomDatabase() {
             }
         }
 
-        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2)
+        /**
+         * v2 → v3：新增发芽报告表。
+         *
+         * 纯增表，不动任何既有数据——这是加字段/加表时唯一该走的姿势。
+         * `fallbackToDestructiveMigration` 在这里等于「用户升级一次，
+         * 思考库清空」，所以宁可写 40 行 SQL。
+         *
+         * 列顺序、类型、NOT NULL 必须与 [SproutEntity] 完全一致，
+         * 否则 Room 启动时的 schema 校验会直接抛
+         * `Migration didn't properly handle`。
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS sprout (
+                        id TEXT NOT NULL,
+                        noteId TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        sectionsJson TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        PRIMARY KEY(id),
+                        FOREIGN KEY(noteId) REFERENCES note(id)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sprout_noteId ON sprout(noteId)")
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
     }
 }

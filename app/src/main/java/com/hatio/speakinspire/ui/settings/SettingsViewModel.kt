@@ -2,19 +2,24 @@ package com.hatio.speakinspire.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.data.export.MarkdownExporter
+import com.hatio.speakinspire.data.export.MarkdownShare
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
+import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.repository.ProviderRepository
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.ConnectionResult
 import com.hatio.speakinspire.service.ProbeMethod
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import android.content.Context
 import javax.inject.Inject
 
 /**
@@ -32,6 +37,9 @@ class SettingsViewModel @Inject constructor(
     private val repo: ProviderRepository,
     private val aiService: AiService,
     private val probeStore: ProbeMethodStore,
+    /** 导出要用整库快照。这里不叫 repo，是为了不和 ProviderRepository 撞名 */
+    private val ideaRepo: IdeaRepository,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -222,6 +230,46 @@ class SettingsViewModel @Inject constructor(
     fun consumeSavedFlag() {
         _state.value = _state.value.copy(saved = false)
     }
+
+    /**
+     * 导出全部记录为一个 Markdown 文件。
+     *
+     * ## 为什么这件事必须做
+     *
+     * 用户把想法记在这里，最底层的担心是「哪天这个 App 不做了，
+     * 我说过的话就没了」。导出的存在，是这份担心的解药——
+     * 所以导出必须是**完整**的：追问、文章、发芽、选题一个不少。
+     * 少一样，他下次还得回来找，那这次导出就没意义。
+     */
+    fun exportAll() {
+        if (_state.value.exporting) return
+        _state.value = _state.value.copy(exporting = true, exportMessage = null)
+        viewModelScope.launch {
+            val views = ideaRepo.exportSnapshot()
+            if (views.isEmpty()) {
+                _state.value = _state.value.copy(
+                    exporting = false,
+                    exportMessage = "还没有记录可以导出。",
+                )
+                return@launch
+            }
+            val md = MarkdownExporter.all(views)
+            val name = MarkdownExporter.fileName("随手记-全部")
+            val ok = MarkdownShare.share(context, name, md)
+            _state.value = _state.value.copy(
+                exporting = false,
+                exportMessage = if (ok) {
+                    "已生成 ${views.size} 条记录的 Markdown，选一个 App 存下来。"
+                } else {
+                    "没能生成导出文件，再试一次。"
+                },
+            )
+        }
+    }
+
+    fun consumeExportMessage() {
+        _state.value = _state.value.copy(exportMessage = null)
+    }
 }
 
 data class SettingsUiState(
@@ -240,6 +288,10 @@ data class SettingsUiState(
     val saveError: String? = null,
     /** 追问方法。与服务商无关，单独存在偏好里 */
     val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
+    /** 正在导出全部 */
+    val exporting: Boolean = false,
+    /** 导出结果提示。null = 没有要提示的 */
+    val exportMessage: String? = null,
 ) {
     fun toConfig() = ProviderConfig(
         providerId = selectedProvider,

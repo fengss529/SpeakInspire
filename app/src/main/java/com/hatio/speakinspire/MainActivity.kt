@@ -2,6 +2,7 @@ package com.hatio.speakinspire
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -9,10 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.activity.compose.BackHandler
-import com.hatio.speakinspire.ui.detail.NoteDetailViewModel
-import com.hatio.speakinspire.ui.screens.NoteDetailScreen
-import com.hatio.speakinspire.ui.detail.EditNoteViewModel
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,22 +22,27 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.hatio.speakinspire.domain.IdeaState
 import com.hatio.speakinspire.domain.IdeaStateDeriver
 import com.hatio.speakinspire.ui.MainViewModel
-import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
-import com.hatio.speakinspire.ui.screens.DeepeningScreen
-import com.hatio.speakinspire.ui.screens.SettingsScreen
-import com.hatio.speakinspire.ui.settings.SettingsViewModel
-import com.hatio.speakinspire.ui.screens.ComposeScreen
 import com.hatio.speakinspire.ui.compose.ComposeViewModel
-import com.hatio.speakinspire.ui.screens.ConvertTopicScreen
-import com.hatio.speakinspire.ui.topic.TopicViewModel
+import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
+import com.hatio.speakinspire.ui.detail.EditNoteViewModel
+import com.hatio.speakinspire.ui.detail.NoteDetailViewModel
 import com.hatio.speakinspire.ui.navigation.MainBottomBar
 import com.hatio.speakinspire.ui.navigation.MainTab
+import com.hatio.speakinspire.ui.screens.ComposeScreen
+import com.hatio.speakinspire.ui.screens.ConvertTopicScreen
+import com.hatio.speakinspire.ui.screens.DeepeningScreen
 import com.hatio.speakinspire.ui.screens.NewNoteScreen
+import com.hatio.speakinspire.ui.screens.NoteDetailScreen
 import com.hatio.speakinspire.ui.screens.RecordScreen
+import com.hatio.speakinspire.ui.screens.SettingsScreen
+import com.hatio.speakinspire.ui.screens.SproutScreen
 import com.hatio.speakinspire.ui.screens.StatScreen
 import com.hatio.speakinspire.ui.screens.ThinkScreen
 import com.hatio.speakinspire.ui.screens.TopicScreen
+import com.hatio.speakinspire.ui.settings.SettingsViewModel
+import com.hatio.speakinspire.ui.sprout.SproutViewModel
 import com.hatio.speakinspire.ui.theme.SpeakInspireTheme
+import com.hatio.speakinspire.ui.topic.TopicViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -61,11 +63,41 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** 全局路由。追问对话页与设置页在下一阶段接入 */
+/**
+ * 全局路由。
+ *
+ * ## 每个页面都要知道「该退回哪」
+ *
+ * Android 的返回手势（边缘左滑）走的是「上一层」语义。
+ * 这里没有用 Navigation 库——路由只有七八个目标、没有深链、
+ * 没有跨进程恢复的需求，一个 sealed class 足够，
+ * 而且每个分支的 [parent] 是显式写出来的，比图里绕一圈好读。
+ *
+ * ## 设置页带 [Settings.from]
+ *
+ * 设置现在从任何页面都能进（顶栏的齿轮）。若 parent 固定成 Home，
+ * 用户从追问页进去、按返回会掉回首页，还得再点两下才回到刚才那页。
+ * 所以把来源带在身上。
+ */
 private sealed interface Route {
     data object Home : Route
-    data object NewNote : Route
-    data object Settings : Route
+
+    /**
+     * 新建记录。
+     *
+     * [parentId] 非空表示这条是从某条记录「长」出来的
+     * （发芽报告里点「接着这句记一条」），会写进 note.parentId。
+     * [returnTo] 是取消时该退回哪——从发芽页来的，退回发芽页。
+     */
+    data class NewNote(
+        val returnTo: Route? = null,
+        val parentId: String? = null,
+        val prefillTitle: String = "",
+        val prefillBody: String = "",
+    ) : Route
+
+    /** [from] 决定返回键回哪一页 */
+    data class Settings(val from: Route? = null) : Route
 
     /** 记录条详情——点开记录条先进这里 */
     data class Detail(val noteId: String) : Route
@@ -74,33 +106,37 @@ private sealed interface Route {
     data class Edit(val noteId: String) : Route
 
     data class Deepening(val noteId: String) : Route
-    data class Compose(val noteId: String) : Route
+
+    /**
+     * 成文 / 文章视图。
+     *
+     * [fromHome] 区分入口：从思考 tab 直接点开的是**已经存过的文章**，
+     * 返回该回列表；从追问页走上来的，返回该回追问页。
+     */
+    data class Compose(val noteId: String, val fromHome: Boolean = false) : Route
+
+    /** 发芽报告 */
+    data class Sprout(val noteId: String) : Route
 
     /**
      * 拍摄骨架页。
      *
      * [fromHome] 区分入口：从选题 tab 直接点进来的，返回该回选题列表；
      * 从成文页一路走下来的，返回该回成文页。
-     * 不区分的话，从列表点进骨架、左滑却掉进成文页，用户会莫名其妙。
      */
     data class Convert(val noteId: String, val fromHome: Boolean = false) : Route
 
-    /**
-     * 从哪来。
-     *
-     * Android 的返回手势（边缘左滑）走的是「上一层」语义，
-     * 所以每个页面必须知道该退回哪——不能一律退回首页，
-     * 那会让用户从成文页一路左滑到首页，而不是回到追问页。
-     */
+    /** 每一页的「上一层」 */
     val parent: Route?
         get() = when (this) {
-            Home, NewNote -> null
-            Settings -> Home
-            // 每个带 noteId 的分支里 this 就是该实例，直接取 noteId
+            Home -> null
+            is NewNote -> returnTo
+            is Settings -> from
             is Detail -> Home
             is Edit -> Detail(noteId)
             is Deepening -> Detail(noteId)
-            is Compose -> Deepening(noteId)
+            is Compose -> if (fromHome) Home else Deepening(noteId)
+            is Sprout -> Detail(noteId)
             is Convert -> if (fromHome) Home else Compose(noteId)
         }
 }
@@ -116,6 +152,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
     val markShotHandler: (String, () -> Unit) -> Unit = { id, onOk ->
         vm.markShot(id) { onOk() }
     }
+
+    // 从任意页进设置。传当前 route 当来源，返回才能回到原处
+    val openSettings: () -> Unit = { route = Route.Settings(route) }
 
     // Android 的边缘左滑与系统返回键走同一条路径。
     // 不声明的话，系统会认为「这是根页面」，
@@ -135,12 +174,14 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                         // 之前直接进追问页，用户看不到自己记了什么，
                         // 也不知道该输入还是该等 AI 问。
                         onOpen = { id -> route = Route.Detail(id) },
-                        onSettings = { route = Route.Settings },
+                        onSettings = openSettings,
                     )
                     MainTab.THINK -> ThinkScreen(
                         ideas = state.think,
-                        // 思考库里的条目已经有文章了，直接进成文/来源视图
-                        onOpen = { id -> route = Route.Compose(id) },
+                        // 思考库里的条目已经有文章了，直接进文章视图。
+                        // fromHome 让它返回时回到列表而不是追问页
+                        onOpen = { id -> route = Route.Compose(id, fromHome = true) },
+                        onSettings = openSettings,
                     )
                     MainTab.TOPIC -> TopicScreen(
                         ideas = state.topic,
@@ -150,12 +191,14 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                         onMarkShot = markShotHandler,
                         onPark = { vm.park(it) },
                         onUndoShot = { vm.undoShot(it) },
+                        onSettings = openSettings,
                     )
                     MainTab.STAT -> StatScreen(
                         stats = state.stats,
                         pendingCount = state.allIdeas.count {
                             IdeaStateDeriver.derive(it) == IdeaState.DEEPENED
                         },
+                        onSettings = openSettings,
                     )
                 }
             }
@@ -163,11 +206,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             MainBottomBar(
                 current = tab,
                 onSelect = { tab = it },
-                onCreate = { route = Route.NewNote },
+                onCreate = { route = Route.NewNote() },
             )
         }
 
-        Route.Settings -> {
+        is Route.Settings -> {
             val svm: SettingsViewModel = hiltViewModel()
             val sstate by svm.state.collectAsStateWithLifecycle()
             SettingsScreen(
@@ -186,6 +229,8 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onAddModel = { svm.addModel() },
                 onCommitModel = { svm.commitNewModel(it) },
                 onCancelAddModel = { svm.cancelAddModel() },
+                onExportAll = { svm.exportAll() },
+                onExportMessageConsumed = { svm.consumeExportMessage() },
             )
         }
 
@@ -200,10 +245,17 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 rounds = nstate.rounds,
                 hasArticle = nstate.hasArticle,
                 hasDeepened = nstate.hasDeepened,
+                sproutLabel = nstate.sproutLabel,
+                latestSproutTitle = nstate.latestSproutTitle,
+                exportMessage = nstate.exportMessage,
                 onBack = { route = r.parent ?: Route.Home },
                 onEdit = { route = Route.Edit(r.noteId) },
                 onDeepen = { route = Route.Deepening(r.noteId) },
+                onSprout = { route = Route.Sprout(r.noteId) },
                 onViewArticle = { route = Route.Compose(r.noteId) },
+                onSettings = openSettings,
+                onExport = { nvm.exportMarkdown() },
+                onDismissMessage = { nvm.consumeExportMessage() },
             )
         }
 
@@ -212,7 +264,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             // 而不是固定的 "edit_$noteId"——
             // 固定 key 会让 hiltViewModel 复用同一个实例，
             // 保存后返回详情页、再进编辑页时拿到的还是旧状态，
-            // load() 又因noteId 相同直接 return，于是显示旧内容。
+            // load() 又因 noteId 相同直接 return，于是显示旧内容。
             //
             // 每次进入编辑都是新的编辑会话，用递增的 sessionId 隔离。
             val sessionId = remember(r.noteId) { System.nanoTime() }
@@ -271,11 +323,12 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onBack = { route = r.parent ?: Route.Home },
                 onRetry = { cvm.compose() },
                 onToggleSource = { cvm.toggleSourceMode() },
-                // 存完再跳——保存是异步的，先跳会读到还没落盘的文章
-                onSave = {
-                    cvm.save { route = Route.Convert(r.noteId) }
-                },
+                // 存完**不跳走**：留在文章页，把「接下来干什么」交给他
+                onSave = { cvm.save() },
                 onGoBackToDeepening = { route = Route.Deepening(r.noteId) },
+                onConvert = { route = Route.Convert(r.noteId) },
+                onExport = { cvm.exportMarkdown() },
+                onSettings = openSettings,
             )
         }
 
@@ -302,12 +355,43 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 // 改最初那条记录。追问页里直接给入口，
                 // 不必退出去详情页找——用户此刻正好知道该改哪句
                 onEditOrigin = { route = Route.Edit(r.noteId) },
+                onSettings = openSettings,
             )
         }
 
-        Route.NewNote -> NewNoteScreen(
+        is Route.Sprout -> {
+            val spvm: SproutViewModel = hiltViewModel(key = "sprout_${r.noteId}")
+            val spstate by spvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.noteId) { spvm.load(r.noteId) }
+            SproutScreen(
+                state = spstate,
+                onBack = { route = r.parent ?: Route.Home },
+                onSprout = { spvm.sprout() },
+                onSettings = openSettings,
+                // 顺着某一节再记一条：新记录挂在原记录下（parentId），
+                // 「记录 → 发芽 → 新记录 → 再发芽」这条生长的线才连得起来
+                onSeedNewNote = { insight ->
+                    route = Route.NewNote(
+                        returnTo = Route.Sprout(r.noteId),
+                        parentId = r.noteId,
+                        prefillBody = insight,
+                    )
+                },
+                onReview = { spvm.review(it) },
+                onDismissError = { spvm.dismissError() },
+            )
+        }
+
+        is Route.NewNote -> NewNoteScreen(
+            initialTitle = r.prefillTitle,
+            initialBody = r.prefillBody,
             onSave = { title, body, done ->
-                vm.createNote(title, body) { done() }
+                vm.createNote(title, body, r.parentId) { newId ->
+                    done()
+                    // 不管从哪来，新建完直接进新记录的详情页——
+                    // 用户刚写完，最想看的是「它长什么样、能做什么」
+                    route = if (newId.isNotBlank()) Route.Detail(newId) else Route.Home
+                }
             },
             onBack = { route = r.parent ?: Route.Home },
         )

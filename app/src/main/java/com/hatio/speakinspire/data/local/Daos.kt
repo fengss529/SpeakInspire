@@ -1,16 +1,10 @@
 package com.hatio.speakinspire.data.local
 
 import androidx.room.Dao
-import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Transaction
 import androidx.room.Upsert
-import com.hatio.speakinspire.data.model.Article
-import com.hatio.speakinspire.data.model.Deepening
-import com.hatio.speakinspire.data.model.Note
-import com.hatio.speakinspire.data.model.Script
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -57,6 +51,16 @@ interface NoteDao {
 
     @Query("SELECT * FROM note ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<NoteEntity>>
+
+    /** 一次性取全部（导出用）。与 [observeActive] 同一条 WHERE，别写成两份规则 */
+    @Query(
+        """
+        SELECT * FROM note
+        WHERE id NOT IN (SELECT noteId FROM trashed)
+        ORDER BY createdAt DESC
+        """
+    )
+    suspend fun findAllActive(): List<NoteEntity>
 
     /** 回收站里的笔记不进主列表 */
     @Query(
@@ -127,6 +131,9 @@ interface ArticleDao {
     @Query("SELECT * FROM article ORDER BY writtenAt DESC")
     fun observeAll(): Flow<List<ArticleEntity>>
 
+    @Query("SELECT * FROM article ORDER BY writtenAt DESC")
+    suspend fun findAll(): List<ArticleEntity>
+
     @Query("UPDATE article SET paragraphsJson = :json, edited = 1 WHERE id = :id")
     suspend fun updateContent(id: String, json: String)
 
@@ -192,4 +199,33 @@ interface ProviderDao {
 
     @Query("UPDATE provider SET active = 1 WHERE providerId = :id")
     suspend fun setActive(id: String)
+}
+
+/**
+ * 发芽报告。
+ *
+ * 每次发芽都是一条新行，**不做 upsert 覆盖**——
+ * 同一条记录在不同时期发出来的芽完全不同，
+ * 覆盖掉等于把上一次的认知收获抹了。
+ */
+@Dao
+interface SproutDao {
+
+    @Insert
+    suspend fun insert(entity: SproutEntity)
+
+    @Query("SELECT * FROM sprout WHERE noteId = :noteId ORDER BY createdAt DESC")
+    suspend fun findByNote(noteId: String): List<SproutEntity>
+
+    @Query("SELECT * FROM sprout WHERE id = :id")
+    suspend fun findById(id: String): SproutEntity?
+
+    @Query("SELECT * FROM sprout ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<SproutEntity>>
+
+    @Query("SELECT * FROM sprout ORDER BY createdAt DESC")
+    suspend fun findAll(): List<SproutEntity>
+
+    @Query("DELETE FROM sprout WHERE id = :id")
+    suspend fun delete(id: String)
 }

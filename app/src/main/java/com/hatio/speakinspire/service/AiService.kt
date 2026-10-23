@@ -6,6 +6,7 @@ import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ComposeResult
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.model.ScriptOutline
+import com.hatio.speakinspire.data.model.SproutSection
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -74,6 +75,25 @@ interface AiService {
      * 生成骨架是较慢的结构化输出，两者不应挤在同一次调用里。
      */
     suspend fun buildOutline(article: ArticleDraft, angle: Angle): ScriptOutline
+
+    /**
+     * 发芽：从一条记录里长出新的连接。
+     *
+     * ## 为什么它和 [streamQuestion] 是两种东西
+     *
+     * 追问只问不答，是为了让用户自己想到。发芽**必须给内容**——
+     * 它的价值就在于「把你说的话放到你没想到的地方去」。
+     * 这不是自相矛盾：追问的产物是**问题**（要用户继续想），
+     * 发芽的产物是**参照物**（用户可以看，也可以不看）。
+     *
+     * 所以这里的契约是：
+     * - 每一节都要从他的原话出发（`seed` 必须是他的句子）
+     * - 引用别人的话必须给出处，给不出就留空，**不许编**
+     * - 不许替他下结论、不许出现「你应该」
+     *
+     * 这三条由 `SproutBoundaryTest` 守着。
+     */
+    suspend fun sprout(context: SproutContext): SproutResult
 
     /**
      * 连接测试，用于设置页的「测试连接」按钮。
@@ -202,4 +222,41 @@ data class DeepeningContext(
 
     /** 是否为最后一轮 */
     val isLastRound: Boolean get() = roundIndex >= maxRounds - 1
+}
+
+/**
+ * 发芽的输入。
+ *
+ * [answers] 也参与——追问过的记录往往比原始那一条更值得发芽：
+ * 用户随手写下的是种子，追问里那些磕磕绊绊的解释才是根。
+ */
+data class SproutContext(
+    val noteId: String,
+    val noteTitle: String,
+    /** 他最初记下的那句话 */
+    val noteBody: String,
+    /** 追问里他说过的句子，按时间顺序 */
+    val answers: List<String> = emptyList(),
+    /**
+     * 已经长出来的芽（标题）。
+     *
+     * 传进去是为了**避免重复**：同一条记录第二次发芽，
+     * 如果又给一遍「爱因斯坦也说过类似的话」，用户会觉得这功能是死的。
+     */
+    val previousTitles: List<String> = emptyList(),
+)
+
+/**
+ * 发芽结果。
+ *
+ * 失败的 [detail] 必须有——发芽是一次较长的请求，
+ * 失败时若只显示「没长出来」，用户无从判断该重试还是该改配置。
+ */
+sealed interface SproutResult {
+    data class Success(
+        val title: String,
+        val sections: List<SproutSection>,
+    ) : SproutResult
+
+    data class Failed(val detail: String? = null) : SproutResult
 }

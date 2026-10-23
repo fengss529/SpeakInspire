@@ -1,6 +1,5 @@
 package com.hatio.speakinspire.data.local
 
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -94,6 +93,32 @@ data class TrashedEntity(
     @PrimaryKey val noteId: String,
     val deletedAt: Long,
     val originalIndex: Int,
+)
+
+/**
+ * 发芽报告。
+ *
+ * 一条记录可以发很多次芽（不同时期想到的不一样），所以是 1:N。
+ * 外键挂 note 并级联——记录没了，它的芽也留不住，
+ * 因为种子的原话已经不在了，报告里每节的 `seed` 都指向一个不存在的东西。
+ */
+@Entity(
+    tableName = "sprout",
+    foreignKeys = [ForeignKey(
+        entity = NoteEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["noteId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("noteId")],
+)
+data class SproutEntity(
+    @PrimaryKey val id: String,
+    val noteId: String,
+    val title: String,
+    /** JSON 序列化的 List<SproutSection> */
+    val sectionsJson: String,
+    val createdAt: Long,
 )
 
 /** 用户自带的服务商配置。key 存EncryptedSharedPreferences，不进 Room。 */

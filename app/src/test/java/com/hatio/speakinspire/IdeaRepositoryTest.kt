@@ -8,6 +8,8 @@ import com.hatio.speakinspire.data.local.NoteEntity
 import com.hatio.speakinspire.data.local.ScriptDao
 import com.hatio.speakinspire.data.local.ScriptEntity
 import com.hatio.speakinspire.data.local.ArticleEntity
+import com.hatio.speakinspire.data.local.SproutDao
+import com.hatio.speakinspire.data.local.SproutEntity
 import com.hatio.speakinspire.data.local.TrashedEntity
 import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.NoteSource
@@ -49,6 +51,12 @@ class FakeNoteDao : NoteDao {
                 n.filter { e -> t.none { it.noteId == e.id } }
             }
         }
+
+    /** 一次性版：与 observeActive 同一条过滤规则，别写成两份 */
+    override suspend fun findAllActive(): List<NoteEntity> =
+        notes.value
+            .filter { n -> trashed.value.none { it.noteId == n.id } }
+            .sortedByDescending { it.createdAt }
 
     override suspend fun exists(id: String): Boolean = findById(id) != null
     override suspend fun hardDelete(id: String) {
@@ -94,6 +102,7 @@ class FakeArticleDao : ArticleDao {
     override suspend fun findByNote(noteId: String) =
         items.value.firstOrNull { it.noteId == noteId }
     override fun observeAll(): Flow<List<ArticleEntity>> = items
+    override suspend fun findAll(): List<ArticleEntity> = items.value
     override suspend fun updateContent(id: String, json: String) {
         items.value = items.value.map {
             if (it.id == id) it.copy(paragraphsJson = json, edited = true) else it
@@ -140,6 +149,37 @@ class FakeScriptDao : ScriptDao {
 }
 
 /**
+ * 发芽报告的内存实现。
+ *
+ * **注意语义**：insert 是追加，不是覆盖。
+ * 同一条记录发两次芽会有两行——用户在不同时期想到的东西不一样，
+ * 后一次不该把前一次顶掉。
+ */
+class FakeSproutDao : SproutDao {
+    private val items = MutableStateFlow<List<SproutEntity>>(emptyList())
+
+    override suspend fun insert(entity: SproutEntity) {
+        items.value = items.value + entity
+    }
+
+    override suspend fun findByNote(noteId: String) =
+        items.value.filter { it.noteId == noteId }.sortedByDescending { it.createdAt }
+
+    override suspend fun findById(id: String) = items.value.firstOrNull { it.id == id }
+
+    override fun observeAll(): Flow<List<SproutEntity>> = items
+
+    override suspend fun findAll(): List<SproutEntity> = items.value
+
+    override suspend fun delete(id: String) {
+        items.value = items.value.filterNot { it.id == id }
+    }
+
+    fun seed(list: List<SproutEntity>) { items.value = list }
+    fun count(): Int = items.value.size
+}
+
+/**
  * Repository 测试。
  *
  * 重点验证两条最容易在实现时被破坏的约束：
@@ -152,7 +192,8 @@ class IdeaRepositoryTest {
     private val deepeningDao = FakeDeepeningDao()
     private val articleDao = FakeArticleDao()
     private val scriptDao = FakeScriptDao()
-    private val repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
+    private val sproutDao = FakeSproutDao()
+    private val repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, sproutDao)
 
     private val t = 1_700_000_000_000L
 
@@ -253,7 +294,7 @@ class IdeaRepositoryTest {
                 seedNote("new", t + 9999),
             )
         )
-        val timeline = repo.observeDeepeningQueue().first()
+        val timeline = repo.observeTimeline().first()
         assertEquals(2, timeline.size)
         // 最新的排最前——「我刚记的」应该是最显眼的那条
         assertEquals("new", timeline[0].note.id)
@@ -265,7 +306,7 @@ class IdeaRepositoryTest {
         noteDao.seed(listOf(seedNote("n1", t)))
         articleDao.seed(listOf(seedArticle("n1")))
 
-        val timeline = repo.observeDeepeningQueue().first()
+        val timeline = repo.observeTimeline().first()
         assertEquals("已成文的记录也该留着", 1, timeline.size)
         assertEquals("n1", timeline[0].note.id)
     }

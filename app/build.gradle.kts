@@ -15,8 +15,8 @@ android {
         applicationId = "com.hatio.speakinspire"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.8.11"
+        versionCode = 20
+        versionName = "0.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -43,6 +43,10 @@ android {
 
     buildFeatures {
         compose = true
+        // 设置页的版本号直接读 BuildConfig.VERSION_NAME。
+        // 以前是手写在 strings.xml 里的，发版时两次对不上（build.gradle 0.9.0、
+        // 界面还显示 V0.8.10），用户报 bug 时报的版本号是错的。
+        buildConfig = true
     }
 
     packaging {
@@ -81,15 +85,16 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
 
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.converter.moshi)
+    // 网络：只用 OkHttp 手拼请求。
+    //
+    // 这里曾经还挂着 retrofit + converter-moshi + moshi + moshi-kotlin，
+    // 但代码里一行都没用过——所有请求体是自己拼的字符串，
+    // 响应是 ResponseParser 手解的（为的是躲开 ProGuard 规则和反射开销）。
+    // 四个库白占体积、白拖编译时间，已删。
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-    implementation(libs.moshi)
-    implementation(libs.moshi.kotlin)
 
     implementation(libs.androidx.security.crypto)
-    implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)

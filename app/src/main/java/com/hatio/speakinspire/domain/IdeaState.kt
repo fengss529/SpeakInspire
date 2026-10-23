@@ -4,6 +4,7 @@ import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.Note
 import com.hatio.speakinspire.data.model.Script
+import com.hatio.speakinspire.data.model.Sprout
 
 /**
  * 8 个派生状态。**note 表不存 status**，全部由关联计算得出。
@@ -38,14 +39,28 @@ enum class IdeaState(val label: String) {
 
 /**
  * 派生快照——把一条笔记关联的所有数据聚成一个对象，
- * UI 只读这个，不直接碰三张表。
+ * UI 只读这个，不直接碰各张表。
  */
 data class IdeaView(
     val note: Note,
     val deepening: Deepening?,
     val article: Article?,
-    val scripts: List<Script>
-)
+    val scripts: List<Script>,
+    /**
+     * 发芽报告。
+     *
+     * **注意它不参与 [IdeaStateDeriver.derive]。** 发芽是「向外长」，
+     * 不改变这条记录在流程里的位置——一条只发过芽的记录，
+     * 仍然是「待深化」。若让它影响状态，用户会被暗示
+     * 「发芽了就完成了」，那正是把记录当成流水线。
+     */
+    val sprouts: List<Sprout> = emptyList(),
+) {
+    /** 最近一次发芽。详情页用它决定按钮文案是「发芽」还是「再看上次的芽」 */
+    val latestSprout: Sprout? get() = sprouts.maxByOrNull { it.createdAt }
+
+    val sproutCount: Int get() = sprouts.size
+}
 
 object IdeaStateDeriver {
 

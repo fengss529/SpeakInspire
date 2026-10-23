@@ -44,9 +44,21 @@ class MainViewModel @Inject constructor(
         initialValue = MainUiState(),
     )
 
-    fun createNote(title: String, body: String, onDone: (String) -> Unit = {}) {
+    /**
+     * 新建一条记录。
+     *
+     * [parentId] 非空表示这条是从某条记录**长**出来的——
+     * 发芽报告里点「接着这句记一条」就走这条路。
+     * 记下这层关系，将来才能回答「这个想法是从哪来的」。
+     */
+    fun createNote(
+        title: String,
+        body: String,
+        parentId: String? = null,
+        onDone: (String) -> Unit = {},
+    ) {
         viewModelScope.launch {
-            val id = repo.createNote(title, body)
+            val id = repo.createNote(title, body, parentId = parentId)
             onDone(id)
         }
     }
@@ -81,13 +93,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             val idea = repo.findIdea(noteId) ?: return@launch
             idea.scripts.firstOrNull { !it.parked }?.let { repo.parkScript(it.id) }
-        }
-    }
-
-    fun forkFrom(noteId: String, onDone: (String) -> Unit = {}) {
-        viewModelScope.launch {
-            val newId = repo.forkFrom(noteId)
-            if (newId != null) onDone(newId)
         }
     }
 

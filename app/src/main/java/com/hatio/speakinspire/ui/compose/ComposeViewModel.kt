@@ -2,6 +2,8 @@ package com.hatio.speakinspire.ui.compose
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.data.export.MarkdownExporter
+import com.hatio.speakinspire.data.export.MarkdownShare
 import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ComposeResult
@@ -14,11 +16,13 @@ import com.hatio.speakinspire.service.DeepeningContext
 import com.hatio.speakinspire.service.ErrorKind
 import com.hatio.speakinspire.service.TransportException
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import android.content.Context
 
 /**
  * 成文页 ViewModel。
@@ -39,6 +43,7 @@ import javax.inject.Inject
 class ComposeViewModel @Inject constructor(
     private val repo: IdeaRepository,
     private val ai: AiService,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ComposeUiState())
@@ -162,9 +167,14 @@ class ComposeViewModel @Inject constructor(
     /**
      * 保存文章。永久留存于思考库——它是资产不是消耗品。
      *
-     * [onSaved] 在写库**之后**才调用。界面靠它跳转下一页——
-     * 之前是先跳转再异步保存，下一页读库时文章还没落盘，
-     * 于是转选题页看到的是「没有文章」，角度拆不出来。
+     * ## 存完不跳转
+     *
+     * 之前保存完会自动跳到转选题页，默认「存文章就是为了拍视频」。
+     * 但很多文章就是文章，存下来是为了留着、为了改、为了导出。
+     * 存完之后留在原地，把下一步的选择权交出去：
+     * 转选题、继续聊、导出，或者直接返回。
+     *
+     * [onSaved] 在写库**之后**才调用——界面刷新要靠它。
      */
     fun save(onSaved: () -> Unit = {}) {
         val current = _state.value
@@ -180,8 +190,28 @@ class ComposeViewModel @Inject constructor(
                     edited = true,
                 )
             )
-            _state.value = _state.value.copy(saved = true)
+            _state.value = _state.value.copy(saved = true, alreadyComposed = true)
             onSaved()
+        }
+    }
+
+    /**
+     * 把这篇（连同它的追问、发芽、选题）导出成 Markdown。
+     *
+     * 只对**已经存进思考库**的文章可用：内存里刚生成、还没落盘的文章
+     * 走导出会拿到空内容，用户会以为导出坏了。
+     */
+    fun exportMarkdown() {
+        val noteId = _state.value.noteId
+        if (noteId.isBlank()) return
+        viewModelScope.launch {
+            val idea = repo.findIdea(noteId) ?: return@launch
+            val md = MarkdownExporter.note(idea)
+            val name = MarkdownExporter.fileName(idea.article?.title ?: idea.note.title)
+            val ok = MarkdownShare.share(context, name, md)
+            if (!ok) {
+                _state.value = _state.value.copy(errorMessage = "没能生成导出文件，再试一次。")
+            }
         }
     }
 

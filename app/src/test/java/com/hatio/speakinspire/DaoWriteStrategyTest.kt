@@ -93,4 +93,20 @@ class DaoWriteStrategyTest {
         )
         assertTrue(noteDao.contains("suspend fun upsert(note: NoteEntity)"))
     }
+
+    @Test
+    fun `发芽报告只能追加，不能覆盖`() {
+        val src = source()
+        // SproutDao 是文件里最后一个 DAO，取到文件尾即可
+        val sproutDao = src.substringAfter("interface SproutDao")
+
+        assertTrue(
+            "每次发芽都是那一刻的认知状态，用 upsert 覆盖等于把上一次的收获抹掉",
+            sproutDao.contains("@Insert"),
+        )
+        assertTrue(
+            "SproutDao 不该出现 upsert",
+            !sproutDao.contains("@Upsert"),
+        )
+    }
 }

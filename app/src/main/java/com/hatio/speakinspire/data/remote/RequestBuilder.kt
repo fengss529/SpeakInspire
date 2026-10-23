@@ -1,9 +1,9 @@
 package com.hatio.speakinspire.data.remote
 
+import com.hatio.speakinspire.data.local.extractRawValue
+import com.hatio.speakinspire.data.local.unquoteIfNeeded
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ProviderConfig
-import com.hatio.speakinspire.data.model.Section
-import com.hatio.speakinspire.data.model.Cue
 
 /**
  * 请求体构造。
@@ -136,6 +136,31 @@ object RequestBuilder {
             "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
 
     /**
+     * 发芽：一次性，返回 JSON 报告。
+     *
+     * 温度给到 0.85——发芽要的是**联想**，不是准确复述。
+     * 太低会让三节都在同义反复，那就不叫「长出新的连接」了。
+     *
+     * 思考模式仍然强制关掉，理由和 [compose] 一样：
+     * 开着时模型会把话全说在思维链里，正文只剩一个 `{}`。
+     */
+    fun sprout(
+        cfg: ProviderConfig,
+        systemPrompt: String,
+        input: String,
+        model: String? = null,
+    ): String = chatBody(
+        cfg = cfg,
+        systemPrompt = systemPrompt,
+        messages = listOf(ChatMessage.user(input)),
+        model = model,
+        stream = false,
+        temperature = 0.85,
+        jsonMode = true,
+        forceNoThinking = true,
+    )
+
+    /**
      * 唯一的请求体拼接入口。
      *
      * 顺序与逗号都在这里一次写对，调用方不可能再漏。
@@ -216,16 +241,28 @@ object RequestBuilder {
  * 从完整响应里抽出 `choices[0].message.content`。
  *
  * 手写而非引 JSON 库——响应结构固定，且要避开 ProGuard 规则。
+ * 扫描逻辑复用 [com.hatio.speakinspire.data.local.extractRawValue]：
+ * 这里以前还挂着第三份 `extractRawValue` + `unquote` 手写副本，
+ * 与 SimpleJson 里那份加起来一共三处同构代码，现已合并到 JsonScan。
  */
 object ResponseParser {
 
-    /** 抽出非流式响应里的 content */
+    /**
+     * 抽出非流式响应里的 content。
+     *
+     * 判断「这个值能不能当正文」必须看**原始值**的第一个字符：
+     * 只有字符串字面量（以 `"` 开头）才是正文。
+     * 曾经写成「解完引号再判断是否以 `{` 开头」——那条判断会误伤所有
+     * JSON 模式的回复（成文、拆角度、骨架的 content 本身就是 `{...}` 字符串），
+     * 表现为模型正常返回但整篇解析为空。
+     */
     fun extractContent(body: String): String? {
         // 优先 message.content，其次 choices[0].text（兼容部分服务商）
-        val keys = listOf("\"content\":", "\"text\":")
-        for (key in keys) {
-            val v = extractRawValue(body, key)
-            if (v != null && v.startsWith("\"")) return unquote(v)
+        for (key in listOf("content", "text")) {
+            val raw = extractRawValue(body, "\"$key\":") ?: continue
+            if (!raw.trimStart().startsWith("\"")) continue
+            val v = unquoteIfNeeded(raw)
+            if (!v.isNullOrBlank()) return v
         }
         return null
     }
@@ -236,101 +273,5 @@ object ResponseParser {
         // 用户在自定义里填了完整端点就直接用
         if (trimmed.endsWith("/chat/completions")) return trimmed
         return trimmed + path
-    }
-
-    private fun unquote(raw: String): String? {
-        if (raw.length < 2 || !raw.startsWith("\"") || !raw.endsWith("\"")) return null
-        val body = raw.substring(1, raw.length - 1)
-        val sb = StringBuilder(body.length)
-        var i = 0
-        while (i < body.length) {
-            val ch = body[i]
-            if (ch == '\\' && i + 1 < body.length) {
-                when (val esc = body[i + 1]) {
-                    'n' -> sb.append('\n')
-                    'r' -> sb.append('\r')
-                    't' -> sb.append('\t')
-                    '"' -> sb.append('"')
-                    '\\' -> sb.append('\\')
-                    '/' -> sb.append('/')
-                    'u' -> {
-                        val hex = body.substring(i + 2, i + 6)
-                        sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
-                        i += 4
-                    }
-                    else -> sb.append(esc)
-                }
-                i += 2
-            } else {
-                sb.append(ch)
-                i++
-            }
-        }
-        return sb.toString()
-    }
-
-    /**
-     * 取 key 的原始值。
-     *
-     * 照搬 SimpleJson 里验证过的那版实现——**按值类型分三种走法**：
-     * 容器跟到配对结束符、字符串跟到闭引号、标量到逗号。
-     * 之前踩过的坑：只看 depth==0 会在值本身是数组时吞掉后续字段。
-     */
-    private fun extractRawValue(obj: String, key: String): String? {
-        val marker = key
-        val idx = obj.indexOf(marker)
-        if (idx < 0) return null
-        var i = idx + marker.length
-        // 跳过冒号与值之间的空白——手写拼接的 JSON 常带空格
-        while (i < obj.length && obj[i].isWhitespace()) i++
-        if (i >= obj.length) return null
-
-        val first = obj[i]
-        var depth = 0
-        var inStr = false
-        var esc = false
-        val sb = StringBuilder()
-
-        when {
-            first == '[' || first == '{' -> {
-                while (i < obj.length) {
-                    val ch = obj[i]
-                    if (esc) { sb.append(ch); esc = false; i++; continue }
-                    if (ch == '\\' && inStr) { sb.append(ch); esc = true; i++; continue }
-                    if (ch == '"') { inStr = !inStr; sb.append(ch); i++; continue }
-                    if (!inStr) {
-                        if (ch == '[' || ch == '{') depth++
-                        else if (ch == ']' || ch == '}') {
-                            depth--
-                            if (depth == 0) { sb.append(ch); return sb.toString() }
-                        }
-                    }
-                    sb.append(ch)
-                    i++
-                }
-            }
-
-            first == '"' -> {
-                sb.append('"')
-                i++
-                esc = false
-                while (i < obj.length) {
-                    val ch = obj[i]
-                    if (esc) { sb.append(ch); esc = false; i++; continue }
-                    if (ch == '\\') { sb.append(ch); esc = true; i++; continue }
-                    if (ch == '"') { sb.append('"'); return sb.toString() }
-                    sb.append(ch)
-                    i++
-                }
-            }
-
-            else -> {
-                while (i < obj.length && obj[i] != ',' && obj[i] != '}') {
-                    sb.append(obj[i])
-                    i++
-                }
-            }
-        }
-        return sb.toString()
     }
 }

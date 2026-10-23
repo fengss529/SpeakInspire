@@ -18,10 +18,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,11 +68,12 @@ fun ComposeScreen(
     onToggleSource: () -> Unit,
     onSave: () -> Unit,
     onGoBackToDeepening: () -> Unit,
+    /** 转成拍摄选题。文章存好之后才给这个入口 */
+    onConvert: () -> Unit = {},
+    /** 导出成 Markdown */
+    onExport: () -> Unit = {},
+    onSettings: () -> Unit = {},
 ) {
-    LaunchedEffect(state.saved) {
-        if (state.saved) onBack()
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -83,7 +83,10 @@ fun ComposeScreen(
                     }
                 },
                 title = {
-                    Text("成文章", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (state.alreadyComposed) "文章" else "成文章",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 },
                 actions = {
                     if (state.hasContent) {
@@ -93,6 +96,9 @@ fun ComposeScreen(
                                 fontSize = 12.sp,
                             )
                         }
+                    }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -125,12 +131,26 @@ fun ComposeScreen(
             }
 
             if (state.hasContent && !state.loading) {
-                SaveBar(
-                    showSourceNote = state.sourceMode && state.aiCount > 0,
-                    mineCount = state.mineCount,
-                    aiCount = state.aiCount,
-                    onSave = onSave,
-                )
+                // 已经在思考库里 → 这是**看文章**，不是「再存一次」。
+                //
+                // 真机反馈原话：「在思考里选择文章，最下面还是会出现
+                // 『存进思考库』的按钮，逻辑不对」。
+                // 对——文章已经在库里了，再摆一个保存按钮，
+                // 用户会怀疑自己刚才点的是什么、是不是又多存了一份。
+                if (state.alreadyComposed) {
+                    ArticleActions(
+                        onConvert = onConvert,
+                        onReopenDeepening = onGoBackToDeepening,
+                        onExport = onExport,
+                    )
+                } else {
+                    SaveBar(
+                        showSourceNote = state.sourceMode && state.aiCount > 0,
+                        mineCount = state.mineCount,
+                        aiCount = state.aiCount,
+                        onSave = onSave,
+                    )
+                }
             }
         }
     }
@@ -263,6 +283,65 @@ private fun SaveBar(
         }
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
             Text("存进思考库")
+        }
+        Spacer(Modifier.height(Spacing.xs))
+        Text(
+            text = "存完之后想转选题、想再聊、想导出，都在下一个页面。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+    }
+}
+
+/**
+ * 已在思考库里的文章——这里是**动作组**，不是「下一步」。
+ *
+ * ## 为什么不再是单个按钮
+ *
+ * 这个页面以前是流水线的一环：存文章 → 转选题 → 拍摄。
+ * 于是「已经存过的文章」下面还挂着「存进思考库」，
+ * 点它什么都不会发生（upsert 同一行），用户只能怀疑按钮坏了。
+ *
+ * 现在三个动作并列，代表这篇**已经存在**的文章可以往哪儿去：
+ * 转成一条要拍的选题、回去接着聊、或者导出来放到别处。
+ * 也可以什么都不做，直接返回——它是资产，不需要被消费掉。
+ */
+@Composable
+private fun ArticleActions(
+    onConvert: () -> Unit,
+    onReopenDeepening: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .navigationBarsPadding()
+            .padding(Spacing.l),
+    ) {
+        Text(
+            text = "已经存在思考库里了。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        Spacer(Modifier.height(Spacing.s))
+        Button(onClick = onConvert, modifier = Modifier.fillMaxWidth()) {
+            Text("转成一条选题")
+        }
+        Spacer(Modifier.height(Spacing.s))
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            OutlinedButton(
+                onClick = onReopenDeepening,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("回去再聊", fontSize = 13.sp)
+            }
+            OutlinedButton(
+                onClick = onExport,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("导出 .md", fontSize = 13.sp)
+            }
         }
     }
 }

@@ -51,7 +51,7 @@ class DeepeningFlowTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
+        repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, FakeSproutDao())
         ai = FakeAiService()
         probeStore = InMemoryProbeMethodStore()
     }

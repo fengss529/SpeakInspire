@@ -4,16 +4,13 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,7 +43,6 @@ import com.hatio.speakinspire.ui.components.EmptyHint
 import com.hatio.speakinspire.ui.components.IdeaCard
 import com.hatio.speakinspire.ui.theme.Spacing
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
  * 「选题」tab —— 待开拍 + 已拍摄。
@@ -67,6 +63,7 @@ fun TopicScreen(
     onMarkShot: (String, () -> Unit) -> Unit,
     onPark: (String) -> Unit,
     onUndoShot: (String) -> Unit,
+    onSettings: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -75,6 +72,11 @@ fun TopicScreen(
         topBar = {
             TopAppBar(
                 title = { Text("选题", style = MaterialTheme.typography.titleLarge) },
+                actions = {
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),

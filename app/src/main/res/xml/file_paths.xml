@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只暴露缓存目录下的 exports/。
+  不是 <cache-path path="/" /> —— 导出功能没有任何理由
+  把整个缓存目录都开放给其他 App。
+-->
+<paths>
+    <cache-path name="exports" path="exports/" />
+</paths>

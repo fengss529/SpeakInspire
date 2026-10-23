@@ -4,21 +4,32 @@ import com.hatio.speakinspire.data.model.Cue
 import com.hatio.speakinspire.data.model.Paragraph
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.model.Section
+import com.hatio.speakinspire.data.model.SproutSection
 
 /**
- * 极简 JSON 编解码。
+ * 本地存储用的极简 JSON 编解码。
  *
- * ## 为什么不引Moshi/Kotlinx Serialization
+ * ## 为什么不引 Moshi / Kotlinx Serialization
  *
- * 只需序列化三种结构（轮次、段落、骨架），字段固定、无嵌套多态。
- * 为此引入完整序列化库并配proguard 规则，收益不抵成本。
+ * 只需序列化五种结构（轮次、段落、骨架段、发芽节、镜头提示），
+ * 字段固定、无嵌套多态。为此引入完整序列化库并配 ProGuard 规则，
+ * 收益不抵成本。而且这些数据是**要留十年的用户资产**，
+ * 格式越简单、依赖越少，将来迁移越容易。
+ *
+ * ## 解析逻辑不在这里
+ *
+ * 扫描 JSON 的那些函数（`splitObjects`、`extractRawValue`、
+ * `parseStringArray`）与 `RealAiService` 解析模型输出用的是同一套，
+ * 已经收进 [JsonScan]。这里只负责「结构 ↔ 字符串」的映射。
  *
  * ## 关键约束：必须正确转义引号
  *
  * 用户原话里出现「他说"这样"」是常态。转义没做对就会破坏整个 JSON，
- * 导致数据静默损坏——**这种bug 极难排查**，所以下面的转义必须对。
+ * 导致数据静默损坏——**这种 bug 极难排查**，所以下面的转义必须对。
  */
 internal object SimpleJson {
+
+    // ---------- 追问轮次 ----------
 
     fun encodeRounds(rounds: List<Round>): String =
         rounds.joinToString(",", "[", "]") { r ->
@@ -30,11 +41,13 @@ internal object SimpleJson {
         if (body.isBlank()) return emptyList()
         return splitObjects(body).map { obj ->
             Round(
-                question = extractString(obj, "q") ?: "",
-                answer = extractString(obj, "a"),
+                question = extractField(obj, "q") ?: "",
+                answer = extractField(obj, "a"),
             )
         }
     }
+
+    // ---------- 文章段落 ----------
 
     fun encodeParagraphs(paras: List<Paragraph>): String =
         paras.joinToString(",", "[", "]") { p ->
@@ -46,11 +59,13 @@ internal object SimpleJson {
         if (body.isBlank()) return emptyList()
         return splitObjects(body).map { obj ->
             Paragraph(
-                text = extractString(obj, "t") ?: "",
+                text = extractField(obj, "t") ?: "",
                 mine = extractBool(obj, "m") ?: false,
             )
         }
     }
+
+    // ---------- 拍摄骨架 ----------
 
     fun encodeSections(sections: List<Section>): String =
         sections.joinToString(",", "[", "]") { s ->
@@ -66,24 +81,48 @@ internal object SimpleJson {
         if (body.isBlank()) return emptyList()
         return splitObjects(body).map { obj ->
             Section(
-                title = extractString(obj, "title") ?: "",
+                title = extractField(obj, "title") ?: "",
                 seconds = extractInt(obj, "sec") ?: 0,
                 phrases = extractStringArray(obj, "ph"),
-                cues = extractRawValue(obj, "cues")?.let { decodeCues(it) } ?: emptyList(),
+                cues = extractRawValue(obj, "\"cues\":")?.let { decodeCues(it) } ?: emptyList(),
             )
         }
     }
 
-    /** cues 是对象数组，必须走 splitObjects 而非 extractString */
+    /** cues 是对象数组，必须走 splitObjects 而非 extractField */
     private fun decodeCues(raw: String): List<Cue> {
         val body = raw.trim().removePrefix("[").removeSuffix("]")
         if (body.isBlank()) return emptyList()
         return splitObjects(body).map { c ->
             Cue(
-                icon = extractString(c, "i") ?: "",
-                text = extractString(c, "t") ?: "",
+                icon = extractField(c, "i") ?: "",
+                text = extractField(c, "t") ?: "",
             )
         }
+    }
+
+    // ---------- 发芽报告 ----------
+
+    /**
+     * 字段名压到最短（seed / ins / src）：发芽报告动辄几百字，
+     * 每条记录存若干份，长字段名的存储与解析开销都不划算。
+     * 但**解码时必须按短名读**，改名就等于旧报告全部解析成空。
+     */
+    fun encodeSproutSections(sections: List<SproutSection>): String =
+        sections.joinToString(",", "[", "]") { s ->
+            """{"seed":${quote(s.seed)},"ins":${quote(s.insight)},"src":${quote(s.source)}}"""
+        }
+
+    fun decodeSproutSections(json: String): List<SproutSection> {
+        val body = json.trim().removePrefix("[").removeSuffix("]")
+        if (body.isBlank()) return emptyList()
+        return splitObjects(body).map { obj ->
+            SproutSection(
+                seed = extractField(obj, "seed") ?: "",
+                insight = extractField(obj, "ins") ?: "",
+                source = extractField(obj, "src") ?: "",
+            )
+        }.filter { it.insight.isNotBlank() }
     }
 
     // ---------- 转义 ----------
@@ -112,234 +151,10 @@ internal object SimpleJson {
         return sb.toString()
     }
 
-    // ---------- 解析 ----------
-
-    /** 按顶层逗号切分对象数组（跳过嵌套的 [] 与引号内的逗号） */
-    /**
- * 按**对象之间**的逗号切分，跳过嵌套与引号内的逗号。
- *
- * ## 曾经写错的地方
- *
- * 原实现只在 `depth == 0` 时切分，但输入是 `{"a":1},{"b":2}` 这样
- * **已经去掉外层方括号**的内容——首个 `{` 让 depth 升到 1，
- * 中间的逗号永远不被识别，整串只切出 1 个元素。
- * 于是「两段 JSON 只解析出一段」，段落来源标记、多个拍摄角度全会丢。
- *
- * 现在两件事一起做：
- * 1. 先剥掉可能存在的外层方括号，让两种输入走同一条路径
- * 2. 判定条件用 `depth <= 0`，覆盖「带括号」与「不带括号」两种深度基准
- */
-private fun splitObjects(raw: String): List<String> {
-    var body = raw.trim()
-    if (body.startsWith("[") && body.endsWith("]")) body = body.substring(1, body.length - 1)
-    if (body.isBlank()) return emptyList()
-
-    val result = mutableListOf<String>()
-    var depth = 0
-    var inStr = false
-    var esc = false
-    val sb = StringBuilder()
-
-    for (ch in body) {
-        if (esc) { sb.append(ch); esc = false; continue }
-        if (ch == '\\' && inStr) { sb.append(ch); esc = true; continue }
-        if (ch == '"') { inStr = !inStr; sb.append(ch); continue }
-        if (!inStr) {
-            when (ch) {
-                '[', '{' -> depth++
-                ']', '}' -> {
-                    depth--
-                    if (depth <= 0 && sb.isNotBlank()) {
-                        result += sb.toString()
-                        sb.clear()
-                        depth = 0
-                        continue
-                    }
-                }
-                ',' -> if (depth <= 0) {
-                    result += sb.toString()
-                    sb.clear()
-                    continue
-                }
-            }
-        }
-        sb.append(ch)
-    }
-    if (sb.isNotBlank()) result += sb.toString()
-    return result.filter { it.isNotBlank() }
-}
-
-    private fun extractString(obj: String, key: String): String? {
-        val marker = "\"$key\":"
-        val idx = obj.indexOf(marker)
-        if (idx < 0) return null
-        var i = idx + marker.length
-        if (i >= obj.length || obj[i] != '"') return null
-        i++
-        val sb = StringBuilder()
-        var esc = false
-        while (i < obj.length) {
-            val ch = obj[i]
-            if (esc) {
-                when (ch) {
-                    'n' -> sb.append('\n')
-                    'r' -> sb.append('\r')
-                    't' -> sb.append('\t')
-                    'b' -> sb.append('\b')
-                    'u' -> {
-                        val hex = obj.substring(i + 1, i + 5)
-                        sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
-                        i += 4
-                    }
-                    else -> sb.append(ch)
-                }
-                esc = false
-                i++
-                continue
-            }
-            if (ch == '\\') { esc = true; i++; continue }
-            if (ch == '"') return sb.toString()
-            sb.append(ch)
-            i++
-        }
-        return sb.toString()
-    }
-
-    /**
-     * 解析字符串数组 `["a","b"]`。
-     *
-     * 不能复用 [splitObjects]——那个函数按顶层逗号切**对象**，
-     * 会把引号内的逗号也当分隔符，导致
-     * `["第一句, 有逗号"]` 被切成两条。
-     */
-    private fun extractStringArray(obj: String, key: String): List<String> {
-        val raw = extractRawValue(obj, key) ?: return emptyList()
-        return parseStringArray(raw)
-    }
-
-    /** 逐字符扫描，正确跳过引号内的逗号 */
-    private fun parseStringArray(raw: String): List<String> {
-        val result = mutableListOf<String>()
-        var i = raw.indexOf('[') + 1
-        val end = raw.lastIndexOf(']').let { if (it < 0) raw.length else it }
-        val sb = StringBuilder()
-        var inStr = false
-        var esc = false
-        var started = false
-
-        while (i < end) {
-            val ch = raw[i]
-            if (inStr) {
-                if (esc) {
-                    when (ch) {
-                        'n' -> sb.append('\n')
-                        'r' -> sb.append('\r')
-                        't' -> sb.append('\t')
-                        'b' -> sb.append('\b')
-                        'u' -> {
-                            val hex = raw.substring(i + 1, i + 5)
-                            sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
-                            i += 4
-                        }
-                        else -> sb.append(ch)
-                    }
-                    esc = false
-                } else if (ch == '\\') {
-                    esc = true
-                } else if (ch == '"') {
-                    result += sb.toString()
-                    sb.clear()
-                    inStr = false
-                    started = false
-                } else {
-                    sb.append(ch)
-                }
-            } else {
-                when (ch) {
-                    '"' -> { inStr = true; started = true }
-                    // 数组元素间的空白与逗号都跳过
-                }
-            }
-            i++
-        }
-        // 容错：数组没闭合时，把残留内容也算进去
-        if (started && sb.isNotEmpty()) result += sb.toString()
-        return result
-    }
-
-    /**
-     * 取某个 key 的原始值（仍带引号/括号）。
-     *
-     * 按值类型分三种走法——这是修掉过两个 bug 后的稳定版本：
-     *
-     * 1. **容器**（`[` 或 `{` 开头）→ 跟到配对的结束符。
-     *    曾经写成「depth == 0 就返回」，结果值本身是数组时 depth 会升到 1，
-     *    遇到内层 `]` 不触发返回，一路把后面的同层字段也吞进来。
-     * 2. **字符串**（`"` 开头）→ 跟到闭引号。要保留首尾引号，
-     *    下游 `extractString` 还靠它定位。
-     * 3. **标量**（数字/布尔/null）→ 到逗号或 `}` 为止。
-     */
-    private fun extractRawValue(obj: String, key: String): String? {
-        val marker = "\"$key\":"
-        val idx = obj.indexOf(marker)
-        if (idx < 0) return null
-        var i = idx + marker.length
-        if (i >= obj.length) return null
-
-        val first = obj[i]
-        var depth = 0
-        var inStr = false
-        var esc = false
-        val sb = StringBuilder()
-
-        when {
-            // 1. 容器
-            first == '[' || first == '{' -> {
-                while (i < obj.length) {
-                    val ch = obj[i]
-                    if (esc) { sb.append(ch); esc = false; i++; continue }
-                    if (ch == '\\' && inStr) { sb.append(ch); esc = true; i++; continue }
-                    if (ch == '"') { inStr = !inStr; sb.append(ch); i++; continue }
-                    if (!inStr) {
-                        if (ch == '[' || ch == '{') depth++
-                        else if (ch == ']' || ch == '}') {
-                            depth--
-                            if (depth == 0) { sb.append(ch); return sb.toString() }
-                        }
-                    }
-                    sb.append(ch)
-                    i++
-                }
-            }
-
-            // 2. 字符串
-            first == '"' -> {
-                sb.append('"')
-                i++
-                esc = false
-                while (i < obj.length) {
-                    val ch = obj[i]
-                    if (esc) { sb.append(ch); esc = false; i++; continue }
-                    if (ch == '\\') { sb.append(ch); esc = true; i++; continue }
-                    if (ch == '"') { sb.append('"'); return sb.toString() }
-                    sb.append(ch)
-                    i++
-                }
-            }
-
-            // 3. 标量
-            else -> {
-                while (i < obj.length && obj[i] != ',' && obj[i] != '}') {
-                    sb.append(obj[i])
-                    i++
-                }
-            }
-        }
-        return sb.toString()
-    }
+    // ---------- 类型转换 ----------
 
     private fun extractBool(obj: String, key: String): Boolean? =
-        extractRawValue(obj, key)?.trim()?.let {
+        extractField(obj, key)?.trim()?.let {
             when (it) {
                 "true" -> true
                 "false" -> false
@@ -348,5 +163,5 @@ private fun splitObjects(raw: String): List<String> {
         }
 
     private fun extractInt(obj: String, key: String): Int? =
-        extractRawValue(obj, key)?.trim()?.toIntOrNull()
+        extractField(obj, key)?.trim()?.toIntOrNull()
 }

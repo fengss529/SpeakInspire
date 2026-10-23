@@ -8,9 +8,9 @@
     <string name="app_copyright">© 2026 Kevin Ho</string>
 
     <!--
-      版本号。与 build.gradle.kts 的 versionName 保持一致，
-      改版本时两处都要改。
+      版本号。数值由 build.gradle.kts 的 versionName 通过 BuildConfig 传进来，
+      这里只留格式——不再手写，避免两处对不上。
     -->
-    <string name="version_label">V0.8.10</string>
+    <string name="version_label">V%1$s</string>
 
 </resources>

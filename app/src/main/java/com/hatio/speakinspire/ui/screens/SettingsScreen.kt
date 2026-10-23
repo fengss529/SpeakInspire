@@ -50,6 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hatio.speakinspire.BuildConfig
 import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.service.ProbeMethod
@@ -87,6 +88,9 @@ fun SettingsScreen(
     onSave: () -> Unit,
     /** 提示弹完后回调，把 saved 标志清掉 */
     onSavedConsumed: () -> Unit = {},
+    /** 导出全部记录为 Markdown */
+    onExportAll: () -> Unit = {},
+    onExportMessageConsumed: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
 
@@ -107,6 +111,12 @@ fun SettingsScreen(
     }
     LaunchedEffect(state.saveError) {
         state.saveError?.let { snackbar.showSnackbar(it) }
+    }
+    LaunchedEffect(state.exportMessage) {
+        state.exportMessage?.let {
+            snackbar.showSnackbar(it)
+            onExportMessageConsumed()
+        }
     }
 
     Scaffold(
@@ -353,6 +363,36 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(Spacing.xxl))
 
+            // 数据。放在服务商配置之后、页脚之前——
+            // 它是「我把东西存在这儿，安全吗」的答案，
+            // 而不是一个功能入口，所以不必抢在前面
+            SectionLabel("你的数据")
+            Spacer(Modifier.height(Spacing.s))
+            Text(
+                text = "所有记录只存在这台手机上，不上传任何服务器。" +
+                    "导出的是纯文本 Markdown——任何编辑器都打得开，十年后也还在。",
+                fontSize = 11.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.height(Spacing.m))
+            OutlinedButton(
+                onClick = onExportAll,
+                enabled = !state.exporting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (state.exporting) "正在整理…" else "导出全部为 Markdown")
+            }
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "每条记录的追问、文章、发芽报告和选题骨架都会一起导出来，不是摘要。",
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+
+            Spacer(Modifier.height(Spacing.xxl))
+
             // 版本号 + 版权放在页脚。
             // 版本号是必要的——用户报 bug 时能说清是哪个版本，
             // 否则只能靠猜「是不是最新版」。
@@ -361,7 +401,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = stringResource(R.string.version_label),
+                    text = stringResource(R.string.version_label, BuildConfig.VERSION_NAME),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.outline,
                 )

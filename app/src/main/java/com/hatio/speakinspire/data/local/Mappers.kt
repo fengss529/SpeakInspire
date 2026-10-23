@@ -5,6 +5,7 @@ import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.Note
 import com.hatio.speakinspire.data.model.NoteSource
 import com.hatio.speakinspire.data.model.Script
+import com.hatio.speakinspire.data.model.Sprout
 
 /**
  * Entity ↔ Model 映射。纯函数，无 Android 依赖——最容易测，也最容易错。
@@ -92,6 +93,22 @@ fun Script.toEntity(): ScriptEntity = ScriptEntity(
     note = note,
 )
 
+fun SproutEntity.toModel(): Sprout = Sprout(
+    id = id,
+    noteId = noteId,
+    title = title,
+    sections = SimpleJson.decodeSproutSections(sectionsJson),
+    createdAt = createdAt,
+)
+
+fun Sprout.toEntity(): SproutEntity = SproutEntity(
+    id = id,
+    noteId = noteId,
+    title = title,
+    sectionsJson = SimpleJson.encodeSproutSections(sections),
+    createdAt = createdAt,
+)
+
 /** 注意这个函数：note 表没有 status，状态是算出来的 */
 fun EntityBundle.toIdeaView(note: Note): com.hatio.speakinspire.domain.IdeaView =
     com.hatio.speakinspire.domain.IdeaView(
@@ -99,6 +116,7 @@ fun EntityBundle.toIdeaView(note: Note): com.hatio.speakinspire.domain.IdeaView 
         deepening = deepening?.toModel(),
         article = article?.toModel(),
         scripts = scripts.map { it.toModel() },
+        sprouts = sprouts.map { it.toModel() },
     )
 
 /**
@@ -109,13 +127,15 @@ fun Note.toIdeaView(bundle: EntityBundle): com.hatio.speakinspire.domain.IdeaVie
     bundle.toIdeaView(this)
 
 /**
- * 三张表查出来的一次性聚合。
+ * 各表查出来的一次性聚合。
  *
- * UI 只读这个聚合，不分别查三个表——避免多次查询之间状态不一致
+ * UI 只读这个聚合，不分别查各个表——避免多次查询之间状态不一致
  * （比如正好在两次查询之间右滑了）。
  */
 data class EntityBundle(
     val deepening: DeepeningEntity?,
     val article: ArticleEntity?,
     val scripts: List<ScriptEntity>,
+    /** 发芽报告。默认空，让只关心前四张表的测试不必每次都构造它 */
+    val sprouts: List<SproutEntity> = emptyList(),
 )

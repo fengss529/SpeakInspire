@@ -36,10 +36,13 @@ class FakeAiService : AiService {
     data class Captured(
         val stage: Stage,
         val systemPrompt: String,
-        val context: DeepeningContext?,
+        /** 追问/成文阶段的上下文 */
+        val context: DeepeningContext? = null,
+        /** 发芽阶段的上下文。与 [context] 互斥 */
+        val sprout: SproutContext? = null,
     )
 
-    enum class Stage { PROBE, DRAFT, ANGLES, OUTLINE, PING }
+    enum class Stage { PROBE, DRAFT, ANGLES, OUTLINE, SPROUT, PING }
 
     // ---------- 脚本化返回 ----------
     var questionScript: List<String> = emptyList()
@@ -49,9 +52,15 @@ class FakeAiService : AiService {
     var angles: List<Angle> = emptyList()
     var outline: ScriptOutline? = null
 
+    /** 脚本化的发芽结果。null = 用默认假报告 */
+    var sproutResult: SproutResult? = null
+    var sproutTitle: String = "长出来的东西"
+    var sproutSections: List<com.hatio.speakinspire.data.model.SproutSection> = emptyList()
+
     // ---------- 行为开关 ----------
     var failProbe: Boolean = false
     var failDraft: Boolean = false
+    var failSprout: Boolean = false
     var failPing: ConnectionResult.Failure? = null
 
     /** 强制 AI 以素材不足拒稿 */
@@ -144,6 +153,29 @@ class FakeAiService : AiService {
             model = config.model,
             contextWindow = 1_000_000L,
         )
+    }
+
+    override suspend fun sprout(context: SproutContext): SproutResult {
+        captured += Captured(
+            stage = Stage.SPROUT,
+            systemPrompt = Prompts.sproutSystem(context.previousTitles),
+            sprout = context,
+        )
+        sproutResult?.let { return it }
+        if (failSprout) return SproutResult.Failed("模拟的发芽失败")
+
+        val sections = sproutSections.ifEmpty {
+            listOf(
+                com.hatio.speakinspire.data.model.SproutSection(
+                    // seed 必须来自用户的原话——连假实现也守这条，
+                    // 否则测试里会放过「seed 是模型编的」这种错
+                    seed = context.noteBody.take(24),
+                    insight = "假的长出来的连接",
+                    source = "",
+                )
+            )
+        }
+        return SproutResult.Success(sproutTitle, sections)
     }
 
     companion object {

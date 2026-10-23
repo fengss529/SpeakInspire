@@ -10,6 +10,7 @@ import com.hatio.speakinspire.data.local.NoteDao
 import com.hatio.speakinspire.data.local.NoteEntity
 import com.hatio.speakinspire.data.local.ScriptDao
 import com.hatio.speakinspire.data.local.SimpleJson
+import com.hatio.speakinspire.data.local.SproutDao
 import com.hatio.speakinspire.data.local.TrashedEntity
 import com.hatio.speakinspire.data.local.toEntity
 import com.hatio.speakinspire.data.local.toIdeaView
@@ -19,6 +20,7 @@ import com.hatio.speakinspire.data.model.Deepening
 import com.hatio.speakinspire.data.model.NoteSource
 import com.hatio.speakinspire.data.model.Paragraph
 import com.hatio.speakinspire.data.model.Script
+import com.hatio.speakinspire.data.model.Sprout
 import com.hatio.speakinspire.domain.IdeaStateDeriver
 import com.hatio.speakinspire.domain.IdeaView
 import kotlinx.coroutines.flow.Flow
@@ -40,12 +42,13 @@ class IdeaRepository(
     private val deepeningDao: DeepeningDao,
     private val articleDao: ArticleDao,
     private val scriptDao: ScriptDao,
+    private val sproutDao: SproutDao,
 ) {
 
     /**
      * 观察全部想法（已排除回收站）。
      *
-     * 注意这里 join 了四路查询——任何一张表变化都会触发重算，
+     * 注意这里 join 了五路查询——任何一张表变化都会触发重算，
      * 所以 8 个派生状态永远是算出来的，不存在过期的缓存。
      */
     fun observeIdeas(): Flow<List<IdeaView>> = combine(
@@ -53,10 +56,12 @@ class IdeaRepository(
         deepeningDao.observeAll(),
         articleDao.observeAll(),
         scriptDao.observeAll(),
-    ) { notes, deepenings, articles, scripts ->
+        sproutDao.observeAll(),
+    ) { notes, deepenings, articles, scripts, sprouts ->
         val deepeningByNote = deepenings.groupBy { it.noteId }
         val articleByNote = articles.associateBy { it.noteId }
         val scriptsByArticle = scripts.groupBy { it.articleId }
+        val sproutsByNote = sprouts.groupBy { it.noteId }
 
         notes.map { entity ->
             val note = entity.toModel()
@@ -66,19 +71,20 @@ class IdeaRepository(
                     deepening = deepeningByNote[note.id]?.firstOrNull(),
                     article = article,
                     scripts = article?.let { scriptsByArticle[it.id] } ?: emptyList(),
+                    sprouts = sproutsByNote[note.id] ?: emptyList(),
                 )
             )
         }
     }
 
     /**
-     * 已废弃：名字叫「深化队列」，但现在返回的是全部记录（时间倒序）。
+     * 「记录」tab 用——全部记录，时间倒序。
      *
-     * 记录 tab 已经改用 [IdeaStateDeriver.recordTimeline] 的语义——
-     * 「我记过什么」不该随状态变化而增减。
-     * 保留这个函数只是为了不破坏旧调用点，新代码请直接用 [observeIdeas]。
+     * 保留一个具名入口而不是让 UI 自己排序：
+     * 排序规则属于领域知识（见 [IdeaStateDeriver.recordTimeline]），
+     * 让界面各自 sortedByDescending 迟早会漂移。
      */
-    fun observeDeepeningQueue(): Flow<List<IdeaView>> =
+    fun observeTimeline(): Flow<List<IdeaView>> =
         observeIdeas().map { IdeaStateDeriver.recordTimeline(it) }
 
     /** 「思考库」用——适合拍的排前面 */
@@ -98,9 +104,32 @@ class IdeaRepository(
                 deepening = deepeningDao.findLatestByNote(noteId),
                 article = article,
                 scripts = scripts,
+                sprouts = sproutDao.findByNote(noteId),
             )
         )
     }
+
+    /** 全部想法 + 全部关联数据，供导出用。一次查全，避免导出时漏表 */
+    suspend fun exportSnapshot(): List<IdeaView> =
+        withContext(Dispatchers.IO) {
+            val notes = noteDao.findAllActive()
+            val deepenings = deepeningDao.findAll().groupBy { it.noteId }
+            val articles = articleDao.findAll().associateBy { it.noteId }
+            val scripts = scriptDao.findAll().groupBy { it.articleId }
+            val sprouts = sproutDao.findAll().groupBy { it.noteId }
+            notes.map { entity ->
+                val note = entity.toModel()
+                val article = articles[note.id]
+                note.toIdeaView(
+                    EntityBundle(
+                        deepening = deepenings[note.id]?.firstOrNull(),
+                        article = article,
+                        scripts = article?.let { scripts[it.id] } ?: emptyList(),
+                        sprouts = sprouts[note.id] ?: emptyList(),
+                    )
+                )
+            }
+        }
 
     /**
      * 改已有记录的内容。
@@ -180,6 +209,22 @@ class IdeaRepository(
     suspend fun saveScript(script: Script) {
         scriptDao.upsert(script.toEntity())
     }
+
+    /**
+     * 存一份发芽报告。
+     *
+     * 用 insert 而非 upsert：每发一次芽都是新的认知状态，
+     * 覆盖掉上一次等于抹掉「我那天是怎么想的」。
+     * id 由调用方生成（带时间戳），不会撞。
+     */
+    suspend fun saveSprout(sprout: Sprout) {
+        sproutDao.insert(sprout.toEntity())
+    }
+
+    suspend fun deleteSprout(sproutId: String) = sproutDao.delete(sproutId)
+
+    suspend fun findSprout(sproutId: String): Sprout? =
+        sproutDao.findById(sproutId)?.toModel()
 
     // ---------- 选题状态：与「保存」严格分开 ----------
 

@@ -20,7 +20,7 @@ class EditNoteTest {
     private val deepeningDao = FakeDeepeningDao()
     private val articleDao = FakeArticleDao()
     private val scriptDao = FakeScriptDao()
-    private val repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao)
+    private val repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, FakeSproutDao())
 
     private val t = 1_700_000_000_000L
 

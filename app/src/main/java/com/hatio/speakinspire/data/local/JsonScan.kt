@@ -1,22 +1,37 @@
-package com.hatio.speakinspire.service
+package com.hatio.speakinspire.data.local
 
 /**
- * 模型输出解析的共用工具。
+ * 手写 JSON 扫描工具。
  *
- * 抽出来是因为 RealAiService 里多处要用，而这些函数
- * 本身就是**容易写错的地方**——必须有独立测试。
+ * ## 为什么会有这个文件
  *
- * 实现要点：按值类型分三种走法（容器 / 字符串 / 标量）。
+ * 项目里有**两处**需要从模型输出或本地存储的 JSON 里取值：
+ * 一是 `SimpleJson`（读本地的 rounds / paragraphs / sections），
+ * 二是 `RealAiService` 解析模型的回复。
+ *
+ * 之前这两处各自写了一套几乎相同的扫描器（`splitObjects`、
+ * `extractRawValue`、`parseStringArray`），修 bug 时得改两遍，
+ * 而且已经出现了细微差异——其中一份处理「数组没闭合」的容错，
+ * 另一份没有。这属于典型的**同一份知识存在两个副本**。
+ *
+ * 现在只有这一份。`SimpleJson` 与 `RealAiService` 都调它。
+ *
+ * ## 实现要点：按值类型分三种走法
+ *
+ * 容器跟到配对结束符、字符串跟到闭引号、标量到逗号。
  * 曾踩过的坑是「只看 depth==0 就返回」——值本身是数组时
  * depth 会升到 1，遇到内层 `]` 不触发返回，会把后续字段一起吞进来。
  */
 
+/** 取某个 key 的字符串值（已去引号、解转义） */
 internal fun extractField(obj: String, key: String): String? =
     extractRawValue(obj, "\"$key\":")?.let { unquoteIfNeeded(it) }
 
+/** 取某个 key 的数组值（仍带方括号） */
 internal fun extractArrayField(obj: String, key: String): String? =
     extractRawValue(obj, "\"$key\":")?.takeIf { it.startsWith("[") }
 
+/** 取第一个字符串字面量。模型偶尔返回不带 key 的裸字符串 */
 internal fun extractFirstString(obj: String): String? {
     val i = obj.indexOf('"')
     if (i < 0) return null
@@ -30,47 +45,63 @@ internal fun extractStringArray(obj: String, key: String): List<String> {
     return parseStringArray(raw)
 }
 
+/**
+ * 解析字符串数组 `["a","b"]`。
+ *
+ * 不能复用 [splitObjects]——那个按顶层逗号切**对象**，
+ * 会把引号内的逗号也当分隔符，`["第一句, 有逗号"]` 会被切成两条。
+ */
 private fun parseStringArray(raw: String): List<String> {
     val result = mutableListOf<String>()
     val start = raw.indexOf('[') + 1
-    val end = raw.lastIndexOf(']').let { if (it < 0) raw.length else it }
     if (start <= 0) return result
+    val end = raw.lastIndexOf(']').let { if (it < 0) raw.length else it }
 
     var i = start
     val sb = StringBuilder()
     var inStr = false
     var esc = false
+    var started = false
 
     while (i < end) {
         val ch = raw[i]
         if (inStr) {
-            if (esc) {
-                when (ch) {
-                    'n' -> sb.append('\n')
-                    'r' -> sb.append('\r')
-                    't' -> sb.append('\t')
-                    'u' -> {
-                        val hex = raw.substring(i + 1, i + 5)
-                        sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
-                        i += 4
+            when {
+                esc -> {
+                    when (ch) {
+                        'n' -> sb.append('\n')
+                        'r' -> sb.append('\r')
+                        't' -> sb.append('\t')
+                        'b' -> sb.append('\b')
+                        'u' -> {
+                            val hex = raw.substring(
+                                (i + 1).coerceAtMost(raw.length),
+                                (i + 5).coerceAtMost(raw.length),
+                            )
+                            sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
+                            i += 4
+                        }
+                        else -> sb.append(ch)
                     }
-                    else -> sb.append(ch)
+                    esc = false
                 }
-                esc = false
-            } else if (ch == '\\') {
-                esc = true
-            } else if (ch == '"') {
-                result += sb.toString()
-                sb.clear()
-                inStr = false
-            } else {
-                sb.append(ch)
+                ch == '\\' -> esc = true
+                ch == '"' -> {
+                    result += sb.toString()
+                    sb.clear()
+                    inStr = false
+                    started = false
+                }
+                else -> sb.append(ch)
             }
         } else if (ch == '"') {
             inStr = true
+            started = true
         }
         i++
     }
+    // 容错：数组没闭合时，把残留内容也算进去
+    if (started && sb.isNotEmpty()) result += sb.toString()
     return result
 }
 
@@ -79,7 +110,7 @@ private fun parseStringArray(raw: String): List<String> {
  *
  * ## 曾经写错的地方
  *
- * 原实现只在 `depth == 0` 时切分，但输入是 `{"a":1},{"b":2}` 这样
+ * 原实现只在 `depth == 0` 时切分，但输入常是 `{"a":1},{"b":2}` 这种
  * **已经去掉外层方括号**的内容——首个 `{` 让 depth 升到 1，
  * 中间的逗号永远不被识别，整串只切出 1 个元素。
  * 于是「两段 JSON 只解析出一段」，段落来源标记、多个拍摄角度全会丢。
@@ -207,11 +238,15 @@ internal fun unquoteIfNeeded(raw: String): String? {
                 'n' -> sb.append('\n')
                 'r' -> sb.append('\r')
                 't' -> sb.append('\t')
+                'b' -> sb.append('\b')
                 '"' -> sb.append('"')
                 '\\' -> sb.append('\\')
                 '/' -> sb.append('/')
                 'u' -> {
-                    val hex = body.substring(i + 2, i + 6)
+                    val hex = body.substring(
+                        (i + 2).coerceAtMost(body.length),
+                        (i + 6).coerceAtMost(body.length),
+                    )
                     sb.append(hex.toIntOrNull(16)?.toChar() ?: '?')
                     i += 4
                 }

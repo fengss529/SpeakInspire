@@ -1,5 +1,10 @@
 package com.hatio.speakinspire.service
 
+import com.hatio.speakinspire.data.local.extractArrayField
+import com.hatio.speakinspire.data.local.extractField
+import com.hatio.speakinspire.data.local.extractFirstString
+import com.hatio.speakinspire.data.local.extractStringArray
+import com.hatio.speakinspire.data.local.splitObjects
 import com.hatio.speakinspire.data.model.Angle
 import com.hatio.speakinspire.data.model.ArticleDraft
 import com.hatio.speakinspire.data.model.ChatMessage
@@ -10,6 +15,7 @@ import com.hatio.speakinspire.data.model.OutlineSection
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.model.ScriptOutline
 import com.hatio.speakinspire.data.model.ShootingCue
+import com.hatio.speakinspire.data.model.SproutSection
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.data.remote.HttpTransport
 import com.hatio.speakinspire.data.remote.RequestBuilder
@@ -52,12 +58,19 @@ class RealAiService(
      */
     override fun streamQuestion(context: DeepeningContext): Flow<String> {
         val cfg = configProvider()
+        // 已经问过的问题要明写进 prompt。
+        //
+        // 模型手里本来就有完整历史，但它倾向于围着最新那句再追一层，
+        // 越问越窄。把问过的句子单列出来并禁止换词重问，
+        // 它才会回到整条记录里找别的入口。
+        val asked = context.rounds.filterNot { it.isUser }.map { it.content }
         val body = RequestBuilder.probe(
             cfg,
             Prompts.probeSystem(
                 method = context.probeMethod,
                 roundIndex = context.roundIndex,
                 maxRounds = context.maxRounds,
+                askedQuestions = asked,
             ),
             probeMessages(context),
         )
@@ -215,9 +228,75 @@ class RealAiService(
         }
     }
 
+    /**
+     * 发芽：从记录里长出新的连接。
+     *
+     * 和成文一样走一次性 JSON 请求，但**不做本地素材预判**——
+     * 一句「我怕他们觉得我水」只有九个字，成不了文章，
+     * 却完全值得发芽。这里是全 App 唯一不需要字数门槛的 AI 能力：
+     * 越短的一句话，往往越有得连接。
+     */
+    override suspend fun sprout(context: SproutContext): SproutResult {
+        val cfg = configProvider()
+        return try {
+            val body = RequestBuilder.sprout(
+                cfg,
+                Prompts.sproutSystem(context.previousTitles),
+                sproutInput(context),
+            )
+            val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
+            val content = ResponseParser.extractContent(raw)
+                ?: return SproutResult.Failed("响应里没有 content：${raw.take(300)}")
+            parseSprout(content)
+        } catch (e: TransportException) {
+            SproutResult.Failed(e.detail ?: ErrorMapper.humanize(e.kind, e.detail))
+        } catch (e: Exception) {
+            SproutResult.Failed(e.message)
+        }
+    }
+
+    /** 发芽的输入：原始记录 + 追问里说过的句子 */
+    private fun sproutInput(c: SproutContext): String = buildString {
+        appendLine("我记下的一条：")
+        if (c.noteTitle.isNotBlank()) appendLine("标题：${c.noteTitle.trim()}")
+        appendLine(c.noteBody.trim())
+        val said = c.answers.filter { it.isNotBlank() }
+        if (said.isNotEmpty()) {
+            appendLine()
+            appendLine("后来我又被追问了几轮，是这样回答的：")
+            said.forEach { appendLine("- ${it.trim()}") }
+        }
+        appendLine()
+        appendLine("请按上面的要求，长出 3 节。")
+    }
+
+    private fun parseSprout(content: String): SproutResult {
+        val trimmed = stripCodeFence(content)
+        val title = extractField(trimmed, "title")?.takeIf { it.isNotBlank() }
+            ?: "长出来的东西"
+
+        val sectionsRaw = extractArrayField(trimmed, "sections")
+            ?: return SproutResult.Failed(
+                "没有 sections 字段，模型返回：${trimmed.take(300)}",
+            )
+
+        val sections = splitObjects(sectionsRaw).mapNotNull { obj ->
+            val insight = extractField(obj, "insight")?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            SproutSection(
+                seed = extractField(obj, "seed") ?: "",
+                insight = insight,
+                source = extractField(obj, "source") ?: "",
+            )
+        }
+        if (sections.isEmpty()) {
+            return SproutResult.Failed("sections 里没有可取出的内容：${sectionsRaw.take(300)}")
+        }
+        return SproutResult.Success(title, sections)
+    }
+
     /** 连接测试：设置页「测试连接」按钮用 */
-    override suspend fun testConnection(config: ProviderConfig): ConnectionResult {
-        val start = System.currentTimeMillis()
+    override suspend fun testConnection(config: ProviderConfig): ConnectionResult {        val start = System.currentTimeMillis()
         return try {
             val raw = transport.ping(
                 ResponseParser.endpoint(config.baseUrl),

@@ -1,6 +1,5 @@
 package com.hatio.speakinspire.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -13,29 +12,31 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,7 +59,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,6 +102,7 @@ fun DeepeningScreen(
     onUpdateAnswer: (Int, String) -> Unit = { _, _ -> },
     /** 编辑最初那条随手记（走详情页的编辑流程） */
     onEditOrigin: () -> Unit = {},
+    onSettings: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
@@ -110,33 +111,27 @@ fun DeepeningScreen(
     // 正在改的那一句（rounds 下标）。null = 没在改
     var editingRound by remember { mutableStateOf<Int?>(null) }
 
-    // 键盘是否弹起。它是**列表需要重新贴底**的信号，见下面的滚动 effect
-    val imeVisible = WindowInsets.isImeVisible
-
     /**
-     * 有新内容、键盘弹起/收起、或换了待答问题 → 滚到最新一条。
+     * 历史列表贴底。
      *
-     * ## 键盘遮挡最新提问的根因
+     * ## 为什么这里只剩下「轮数变了就贴底」
      *
-     * 不是缺 `imePadding()`（输入栏本来就有），而是**列表没有跟着重新贴底**。
-     * 键盘占掉屏幕下半部分后，LazyColumn 的可视高度变小，
-     * 但它仍然锚定原来那一项——底部被吃掉的那段就直接切掉，
-     * 而最新的问题恰好排在最底下。于是用户看到的是：
-     * 键盘一弹，刚刚 AI 问的那句话正好被盖住。
+     * 原来还有两个触发条件：`streaming` 和 `imeVisible`。
+     * 它们是为了让**最新那一问**不被键盘盖住——但那个做法注定不稳：
+     * 键盘弹出的动画有 200-300ms，期间 LazyColumn 的视口每一帧都在变矮，
+     * 而 `animateScrollToItem` 只认它开始那一刻的布局。
+     * 滚一次，算错一次，最后仍然是差一截。
      *
-     * 所以这里把 `imeVisible` 也作为触发条件，并且**等一帧**
-     * 再算 item 数量——effect 刚启动时 layoutInfo 还是上一帧的，
-     * 直接读会读到 0，滚动就静默失效。
+     * 现在的解法不是滚得更聪明，而是**那一问根本不在列表里**：
+     * 见下方的 CurrentTurn，它和输入框一起被 imePadding 抬起，
+     * 只要输入框看得见，问题就看得见。
+     *
+     * 所以这里只剩一件事：多了一轮历史，就把列表带到最底下。
      */
-    LaunchedEffect(
-        state.rounds.size,
-        state.streaming,
-        state.pendingQuestion,
-        imeVisible,
-    ) {
+    LaunchedEffect(state.rounds.size) {
         withFrameNanos { }
         val total = listState.layoutInfo.totalItemsCount
-        if (total > 0) listState.animateScrollToItem(total - 1)
+        if (total > 0) runCatching { listState.animateScrollToItem(total - 1) }
     }
 
     /**
@@ -229,6 +224,9 @@ fun DeepeningScreen(
                         TextButton(onClick = onFinishEarly) {
                             Text("收尾", fontSize = 13.sp)
                         }
+                    }
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -336,40 +334,6 @@ fun DeepeningScreen(
                     )
                 }
 
-                // 正在流的 AI 气泡
-                if (state.showTypingBubble) {
-                    item("typing") {
-                        AiBubble(text = state.streaming, streaming = true, onSkip = onSkip)
-                    }
-                }
-
-                // 最后一轮：问题已到、还没回答 —— 这就是当前要回的那句话。
-                //
-                // **这里曾经什么都不显示，是整个 App 最严重的一个洞。**
-                //
-                // 上面那个 items 只渲染 `answered` 的轮次，
-                // 而流式气泡只在 `streaming` 非空时存在。
-                // 于是流程是：文字一个个浮现 → 流结束 → 问题进了 rounds
-                // 但标着未回答 → **气泡消失**。
-                //
-                // 用户看到的是：闪了一下字，然后页面空空，输入框写着「回应它」。
-                // 他只能盲猜着回答。之前所有关于 prompt、JSON、思考模式的排查，
-                // 都绕过了这个更基础的事实：**问题从来没有被显示出来过。**
-                val pending = state.pendingQuestion
-                if (pending != null) {
-                    item("pending") {
-                        // 和上面的历史隔开一点：这一条是要你现在回答的，
-                        // 不能让它淹没在一串同样气质的旧问题里
-                        Column(Modifier.padding(top = Spacing.l)) {
-                            AiBubble(
-                                text = pending,
-                                streaming = false,
-                                onSkip = {},
-                            )
-                        }
-                    }
-                }
-
                 // 收尾卡。
                 //
                 // 判定收在 DeepeningUiState.showFinishCard 里，不在这儿拼条件——
@@ -395,6 +359,28 @@ fun DeepeningScreen(
                     }
                 }
             }
+
+            // 当前轮次：**钉在输入框正上方**，不参与列表滚动。
+            //
+            // ## 键盘遮挡为什么在结构上被解决了
+            //
+            // 之前这一问是 LazyColumn 的最后一项。键盘一弹，
+            // 视口从底部被削掉一截，而列表锚定的是旧的可见项——
+            // 最后那一项正好落在被削掉的区域里。用户看到的就是
+            // 「问题被键盘盖住了，要手动往上拨一下」。
+            //
+            // 试过用滚动去追（监听 ime 变化、等一帧、animateScrollToItem），
+            // 真机上仍然差一截：键盘动画 200-300ms，滚动只认开始那一刻的布局。
+            //
+            // 现在它不在列表里了。这里的 Column 带 imePadding，
+            // 键盘抬起时整个内容区一起上移，输入框和它上面这一问
+            // 是同一个整体——**只要输入框看得见，问题就一定看得见**。
+            // 跟滚动、跟时机、跟帧数都没有关系了。
+            CurrentTurn(
+                streaming = state.streaming,
+                pending = state.pendingQuestion,
+                onSkip = onSkip,
+            )
 
             // 输入区
             //
@@ -664,6 +650,59 @@ private fun HistoryTurn(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 当前这一问 —— 钉在输入框正上方，不参与列表滚动。
+ *
+ * 这是整个 App 里唯一「必须始终可见」的文字：用户此刻要回答的，
+ * 就是这一句。它被键盘盖住一次，用户就得先拨一下才能作答，
+ * 而每次追问都要拨一下的话，这个功能就没法用了。
+ *
+ * 高度给了上限并允许内部滚动：模型偶尔会长篇输出，
+ * 不限制的话它会把上面的历史压成一条缝，键盘弹起时甚至把输入框顶出屏幕。
+ */
+@Composable
+private fun CurrentTurn(
+    streaming: String,
+    pending: String?,
+    onSkip: () -> Unit,
+) {
+    val text = streaming.ifEmpty { pending.orEmpty() }
+    if (text.isBlank()) return
+    val isStreaming = streaming.isNotEmpty()
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = Spacing.l),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.l)
+                .padding(top = Spacing.s, bottom = Spacing.xs),
+        ) {
+            Text(
+                text = if (isStreaming) "正在问…" else "现在回这句",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 180.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                AiBubble(text = text, streaming = isStreaming, onSkip = onSkip)
             }
         }
     }

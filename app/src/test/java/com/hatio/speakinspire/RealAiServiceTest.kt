@@ -17,9 +17,9 @@ import com.hatio.speakinspire.service.ErrorKind
 import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.service.RealAiService
 import com.hatio.speakinspire.service.TransportException
-import com.hatio.speakinspire.service.extractField
-import com.hatio.speakinspire.service.splitObjects
-import com.hatio.speakinspire.service.unquoteIfNeeded
+import com.hatio.speakinspire.data.local.extractField
+import com.hatio.speakinspire.data.local.splitObjects
+import com.hatio.speakinspire.data.local.unquoteIfNeeded
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -310,8 +310,8 @@ class ResponseParserTest {
     }
 }
 
-/** 模型输出解析工具测试 */
-class ModelOutputParserTest {
+/** 手写 JSON 扫描器测试（JsonScan） */
+class JsonScanTest {
 
     @Test
     fun `提取字符串字段`() {
