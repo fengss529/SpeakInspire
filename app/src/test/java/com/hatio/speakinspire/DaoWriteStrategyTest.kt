@@ -2,6 +2,7 @@ package com.hatio.speakinspire
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,16 +71,22 @@ class DaoWriteStrategyTest {
         val src = source()
         val replaceCount = Regex("OnConflictStrategy\\.REPLACE").findAll(src).count()
         assertEquals(
-            "OnConflictStrategy.REPLACE 只该出现 1 次（note 表的 trash）。" +
+            "OnConflictStrategy.REPLACE 只该出现 1 次（TrashedDao 的 insert）。" +
                 "多出来的每一处都会在真机上静默删除子表数据。",
             1,
             replaceCount,
         )
-        // 那一处确实是回收站
-        val trashBlock = src.substringAfter("suspend fun trash", "")
+        // 那一处确实在回收站 DAO 里。V0.10 起它从 NoteDao 搬到了独立的 TrashedDao
+        val trashedDao = src.substringAfter("interface TrashedDao")
         assertTrue(
             "唯一的 REPLACE 必须属于回收站写入",
-            trashBlock.take(120).isNotBlank(),
+            trashedDao.contains("OnConflictStrategy.REPLACE"),
+        )
+        assertFalse(
+            "记录、文章、选题的 DAO 里都不许出现 REPLACE",
+            src.substringAfter("interface NoteDao")
+                .substringBefore("interface TrashedDao")
+                .contains("OnConflictStrategy.REPLACE"),
         )
     }
 

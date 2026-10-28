@@ -183,7 +183,10 @@ class ComposeViewModel @Inject constructor(
             repo.saveArticle(
                 Article(
                     id = current.articleId,
-                    noteId = current.noteId,
+                    // 记录 id 只是出处，没有外键。记录被删掉后这里会悬空，文章照常存在
+                    sourceNoteId = current.noteId.ifBlank { null },
+                    // 生成那一刻的原文快照——原始记录删了，文章里「这段在说什么」还得有据可查
+                    sourceText = current.originalNote,
                     title = current.title.trim(),
                     paragraphs = current.paragraphs,
                     writtenAt = System.currentTimeMillis(),

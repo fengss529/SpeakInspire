@@ -2,6 +2,7 @@ package com.hatio.speakinspire.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.data.local.TrashType
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.domain.IdeaState
 import com.hatio.speakinspire.domain.IdeaStateDeriver
@@ -97,11 +98,11 @@ class MainViewModel @Inject constructor(
     }
 
     fun moveToTrash(noteId: String) {
-        viewModelScope.launch { repo.moveToTrash(noteId) }
+        viewModelScope.launch { repo.moveToTrash(TrashType.NOTE, noteId) }
     }
 
     fun restore(noteId: String) {
-        viewModelScope.launch { repo.restoreFromTrash(noteId) }
+        viewModelScope.launch { repo.restoreFromTrash(TrashType.NOTE, noteId) }
     }
 }
 

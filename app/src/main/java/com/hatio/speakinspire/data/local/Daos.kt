@@ -31,7 +31,7 @@ import kotlinx.coroutines.flow.Flow
  * [Upsert] 走的是 `INSERT ... ON CONFLICT DO UPDATE`（低版本退化为
  * INSERT+UPDATE），全程不删行，因此不会触发级联。
  *
- * 唯一保留 REPLACE 的是 [NoteDao.trash]：`trashed` 没有子表，且语义就是覆盖。
+ * 唯一保留 REPLACE 的是 [TrashedDao.insert]：`trashed` 没有子表，且语义就是覆盖。
  */
 
 @Dao
@@ -56,7 +56,7 @@ interface NoteDao {
     @Query(
         """
         SELECT * FROM note
-        WHERE id NOT IN (SELECT noteId FROM trashed)
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'note')
         ORDER BY createdAt DESC
         """
     )
@@ -66,7 +66,7 @@ interface NoteDao {
     @Query(
         """
         SELECT * FROM note
-        WHERE id NOT IN (SELECT noteId FROM trashed)
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'note')
         ORDER BY createdAt DESC
         """
     )
@@ -77,18 +77,6 @@ interface NoteDao {
 
     @Query("DELETE FROM note WHERE id = :id")
     suspend fun hardDelete(id: String)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun trash(entry: TrashedEntity)
-
-    @Query("DELETE FROM trashed WHERE noteId = :noteId")
-    suspend fun untrash(noteId: String)
-
-    @Query("SELECT * FROM trashed ORDER BY deletedAt DESC")
-    fun observeTrashed(): Flow<List<TrashedEntity>>
-
-    @Query("DELETE FROM trashed WHERE deletedAt < :before")
-    suspend fun purgeTrashedBefore(before: Long)
 }
 
 @Dao
@@ -125,7 +113,7 @@ interface ArticleDao {
     @Upsert
     suspend fun upsert(entity: ArticleEntity)
 
-    @Query("SELECT * FROM article WHERE noteId = :noteId LIMIT 1")
+    @Query("SELECT * FROM article WHERE sourceNoteId = :noteId LIMIT 1")
     suspend fun findByNote(noteId: String): ArticleEntity?
 
     @Query("SELECT * FROM article ORDER BY writtenAt DESC")
@@ -147,7 +135,7 @@ interface ScriptDao {
     @Upsert
     suspend fun upsert(entity: ScriptEntity)
 
-    @Query("SELECT * FROM script WHERE articleId = :articleId ORDER BY createdAt DESC")
+    @Query("SELECT * FROM script WHERE sourceArticleId = :articleId ORDER BY createdAt DESC")
     suspend fun findByArticle(articleId: String): List<ScriptEntity>
 
     @Query("SELECT * FROM script ORDER BY createdAt DESC")
@@ -228,4 +216,38 @@ interface SproutDao {
 
     @Query("DELETE FROM sprout WHERE id = :id")
     suspend fun delete(id: String)
+}
+
+/**
+ * 回收站。**三种资源共用一张表**，靠 `resourceType` 区分。
+ *
+ * 之所以从 [NoteDao] 里搬出来：只要它还挂在 NoteDao 上，
+ * 「删文章」这件事就得绕回记录，那还是捆绑。
+ */
+@Dao
+interface TrashedDao {
+
+    /**
+     * 唯一允许 REPLACE 的地方——`trashed` 没有子表，语义就是覆盖。
+     * 同一个资源重复删除时不该插出两行。
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entry: TrashedEntity)
+
+    @Query("DELETE FROM trashed WHERE resourceType = :type AND resourceId = :resourceId")
+    suspend fun remove(type: String, resourceId: String)
+
+    @Query("SELECT * FROM trashed ORDER BY deletedAt DESC")
+    fun observeAll(): Flow<List<TrashedEntity>>
+
+    @Query("SELECT * FROM trashed ORDER BY deletedAt DESC")
+    suspend fun findAll(): List<TrashedEntity>
+
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM trashed WHERE resourceType = :type AND resourceId = :resourceId)"
+    )
+    suspend fun contains(type: String, resourceId: String): Boolean
+
+    @Query("DELETE FROM trashed WHERE deletedAt < :before")
+    suspend fun purgeBefore(before: Long)
 }

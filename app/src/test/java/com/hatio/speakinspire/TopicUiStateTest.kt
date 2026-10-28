@@ -52,13 +52,13 @@ class TopicUiStateTest {
 
     @Test
     fun `骨架总时长从分段累加`() {
-        val s = state(existing = Script("s1", "a1", "挑衅", sections(), 0L))
+        val s = state(existing = Script("s1", "a1", "文章标题", "挑衅", sections(), 0L))
         assertEquals(54, s.totalSeconds)
     }
 
     @Test
     fun `四段总时长落在30到60 秒`() {
-        val s = state(existing = Script("s1", "a1", "挑衅", sections(), 0L))
+        val s = state(existing = Script("s1", "a1", "文章标题", "挑衅", sections(), 0L))
         assertEquals(4, s.displaySections.size)
         assertTrue("总时长应在 30-60 秒，实际 ${s.totalSeconds}", s.totalSeconds in 30..60)
     }
@@ -76,7 +76,7 @@ class TopicUiStateTest {
 
     @Test
     fun `镜头提示保留在已存选题里`() {
-        val s = state(existing = Script("s1", "a1", "挑衅", sections(), 0L))
+        val s = state(existing = Script("s1", "a1", "文章标题", "挑衅", sections(), 0L))
         assertEquals("镜头提示不能丢", 1, s.displaySections[0].cues.size)
     }
 
@@ -90,14 +90,14 @@ class TopicUiStateTest {
 
     @Test
     fun `未标记时不算已拍摄`() {
-        val s = state(existing = Script("s1", "a1", "角度", sections(), 0L))
+        val s = state(existing = Script("s1", "a1", "文章标题", "角度", sections(), 0L))
         assertFalse(s.isShot)
     }
 
     @Test
     fun `标记后显示已拍摄`() {
         val s = state(
-            existing = Script("s1", "a1", "角度", sections(), 0L, shotAt = 1700000000000L),
+            existing = Script("s1", "a1", "文章标题", "角度", sections(), 0L, shotAt = 1700000000000L),
             shotAt = 1700000000000L,
         )
         assertTrue(s.isShot)
@@ -106,7 +106,7 @@ class TopicUiStateTest {
     @Test
     fun `标记只是状态位不改变内容`() {
         // 「已拍摄」是这个 App 唯一的动作，没有其他副作用
-        val before = Script("s1", "a1", "角度", sections(), 0L)
+        val before = Script("s1", "a1", "文章标题", "角度", sections(), 0L)
         val after = before.copy(shotAt = 1700000000000L)
         assertEquals("内容不能变", before.sections, after.sections)
         assertEquals(before.angle, after.angle)
@@ -142,7 +142,7 @@ class TopicUiStateTest {
 
     @Test
     fun `已有选题时优先展示它`() {
-        val existing = Script("s1", "a1", "已存的角度", sections(), 0L)
+        val existing = Script("s1", "a1", "文章标题", "已存的角度", sections(), 0L)
         val s = state(chosen = Angle("新角度", "", ""), existing = existing)
         assertTrue(s.hasExisting)
         assertEquals("已存的角度", s.displayAngle)

@@ -54,6 +54,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // Robolectric 要读 res/ 和 assets（Room 迁移测试要读 schemas 里的 DDL）。
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
+    // 把 Room 导出的 schema 快照挂给单元测试，迁移测试要按版本号取建表语句。
+    sourceSets {
+        getByName("test").assets.srcDirs("$projectDir/schemas")
+    }
 }
 
 ksp {
@@ -102,4 +114,8 @@ dependencies {
     testImplementation(libs.turbine)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.room.testing)
+    // Robolectric 提供真实的 Android SQLite，让 Room 的迁移/级联能在 JVM 上验证。
+    // 只为 data/local 下的几个测试服务，不影响其他 388 条纯逻辑测试的速度。
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

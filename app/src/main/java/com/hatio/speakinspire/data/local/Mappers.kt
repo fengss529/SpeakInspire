@@ -54,7 +54,8 @@ fun Deepening.toEntity(): DeepeningEntity = DeepeningEntity(
 
 fun ArticleEntity.toModel(): Article = Article(
     id = id,
-    noteId = noteId,
+    sourceNoteId = sourceNoteId,
+    sourceText = sourceText,
     title = title,
     paragraphs = SimpleJson.decodeParagraphs(paragraphsJson),
     writtenAt = writtenAt,
@@ -63,7 +64,8 @@ fun ArticleEntity.toModel(): Article = Article(
 
 fun Article.toEntity(): ArticleEntity = ArticleEntity(
     id = id,
-    noteId = noteId,
+    sourceNoteId = sourceNoteId,
+    sourceText = sourceText,
     title = title,
     paragraphsJson = SimpleJson.encodeParagraphs(paragraphs),
     writtenAt = writtenAt,
@@ -72,7 +74,8 @@ fun Article.toEntity(): ArticleEntity = ArticleEntity(
 
 fun ScriptEntity.toModel(): Script = Script(
     id = id,
-    articleId = articleId,
+    sourceArticleId = sourceArticleId,
+    sourceTitle = sourceTitle,
     angle = angle,
     sections = SimpleJson.decodeSections(sectionsJson),
     createdAt = createdAt,
@@ -83,7 +86,8 @@ fun ScriptEntity.toModel(): Script = Script(
 
 fun Script.toEntity(): ScriptEntity = ScriptEntity(
     id = id,
-    articleId = articleId,
+    sourceArticleId = sourceArticleId,
+    sourceTitle = sourceTitle,
     angle = angle,
     rationale = "",
     sectionsJson = SimpleJson.encodeSections(sections),

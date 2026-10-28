@@ -274,9 +274,10 @@ class MappersTest {
     @Test
     fun `article 往返保留段落来源标记`() {
         val a = Article(
-            "a1", "n1", "标题",
-            listOf(Paragraph("我说的", true), Paragraph("AI 补的", false)),
-            1700000000000L, edited = true,
+            id = "a1", sourceNoteId = "n1", sourceText = "原始记录",
+            title = "标题",
+            paragraphs = listOf(Paragraph("我说的", true), Paragraph("AI 补的", false)),
+            writtenAt = 1700000000000L, edited = true,
         )
         val back = a.toEntity().toModel()
         assertEquals(a, back)
@@ -285,16 +286,17 @@ class MappersTest {
 
     @Test
     fun `article 编辑后 edited 标记为 true`() {
-        val a = Article("a1", "n1", "t", listOf(Paragraph("x", true)), 0L)
+        val a = Article("a1", "n1", "原始", "t", listOf(Paragraph("x", true)), 0L)
         assertTrue(!a.toEntity().toModel().edited)
     }
 
     @Test
     fun `script 往返保留拍摄与搁置状态`() {
         val s = Script(
-            "s1", "a1", "直接挑衅",
-            listOf(Section("开场", 8, listOf("你说话是不是总带然后"))),
-            1700000000000L,
+            id = "s1", sourceArticleId = "a1", sourceTitle = "文章标题",
+            angle = "直接挑衅",
+            sections = listOf(Section("开场", 8, listOf("你说话是不是总带然后"))),
+            createdAt = 1700000000000L,
             shotAt = 1700000200000L,
             parked = false,
             note = "备注内容",
@@ -306,13 +308,13 @@ class MappersTest {
 
     @Test
     fun `未拍摄的 script shotAt 为 null`() {
-        val s = Script("s1", "a1", "角度", emptyList(), 0L)
+        val s = Script("s1", "a1", "标题", "角度", emptyList(), 0L)
         assertNull(s.toEntity().toModel().shotAt)
     }
 
     @Test
     fun `左滑搁置后 parked 为 true`() {
-        val s = Script("s1", "a1", "角度", emptyList(), 0L, parked = true)
+        val s = Script("s1", "a1", "标题", "角度", emptyList(), 0L, parked = true)
         assertTrue(s.toEntity().toModel().parked)
     }
 }

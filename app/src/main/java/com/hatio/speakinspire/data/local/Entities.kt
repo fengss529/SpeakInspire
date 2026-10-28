@@ -6,10 +6,11 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Room 实体。note 表**不存 status**——8 个状态全部由关联派生计算。
+ * Room 实体。note / article / script 是**三种独立资源**，
+ * 状态各自派生，不跨资源（详见 domain/ResourceState.kt）。
  *
- * 这不是省事，而是刻意的：status 存冗余，一旦某个操作忘了更新，
- * 就会出现「列表显示待深化但实际已拍摄」这类不一致，且极难排查。
+ * 不存冗余 status：一旦某个操作忘了更新，就会出现
+ * 「列表显示待深化但实际已拍摄」这类不一致，且极难排查。
  */
 
 @Entity(tableName = "note")
@@ -43,57 +44,87 @@ data class DeepeningEntity(
     val roundsJson: String,
 )
 
+/**
+ * 文章。
+ *
+ * **没有外键，指向 note 的只是一列普通的 [sourceNoteId]。**
+ *
+ * 这是 V0.10 的核心决定：记录和文章是两种独立资源。
+ * 记录被删掉之后，文章要照常能读、能改、能转选题——
+ * 它是那次思考的产物，产物本身可以离开原料活下去。
+ *
+ * [sourceText] 是生成那一刻的记录原文快照，理由同上：
+ * 原始记录删了，文章里「这段说的事」还得有个地方能查。
+ */
 @Entity(
     tableName = "article",
-    foreignKeys = [ForeignKey(
-        entity = NoteEntity::class,
-        parentColumns = ["id"],
-        childColumns = ["noteId"],
-        onDelete = ForeignKey.CASCADE,
-    )],
-    indices = [Index("noteId")],
+    indices = [Index("sourceNoteId")],
 )
 data class ArticleEntity(
     @PrimaryKey val id: String,
-    val noteId: String,
+    /** 出处记录 id。无外键，可能悬空——UI 据此显示「原始记录已删除」 */
+    val sourceNoteId: String?,
+    /** 生成时的记录原文快照。空串表示早于 v4 且原文已不可考 */
+    val sourceText: String,
     val title: String,
-    /** JSON 序列化的 List<DraftParagraph>，含 isMine 标记 */
+    /** JSON 序列化的 List<Paragraph>，含 mine 标记 */
     val paragraphsJson: String,
     val writtenAt: Long,
     val edited: Boolean,
 )
 
+/**
+ * 选题。同样**没有外键**，指向文章的是普通列 [sourceArticleId]。
+ *
+ * 选题独立的意义：文章删了，已经拆好的分镜还能拿去拍。
+ * [sourceTitle] 让选题脱离文章后仍能自报家门。
+ */
 @Entity(
     tableName = "script",
-    foreignKeys = [ForeignKey(
-        entity = ArticleEntity::class,
-        parentColumns = ["id"],
-        childColumns = ["articleId"],
-        onDelete = ForeignKey.CASCADE,
-    )],
-    indices = [Index("articleId")],
+    indices = [Index("sourceArticleId")],
 )
 data class ScriptEntity(
     @PrimaryKey val id: String,
-    val articleId: String,
+    /** 出处文章 id。无外键，可能悬空 */
+    val sourceArticleId: String?,
+    /** 文章标题快照 */
+    val sourceTitle: String,
     val angle: String,
     val rationale: String,
-    /** JSON 序列化的 List<OutlineSection> */
+    /** JSON 序列化的 List<Section> */
     val sectionsJson: String,
     val createdAt: Long,
     val shotAt: Long?,
-    /** 左滑移回思考库：搁置而非删除，文章本身没错 */
+    /** 搁置：先不拍。**不再是「移回思考库」**——它就是选题自己的一个状态 */
     val parked: Boolean,
     val note: String,
 )
 
-/** 回收站：删除是可逆的，但没有归档就够了 */
-@Entity(tableName = "trashed")
+/**
+ * 回收站。**能装三种资源**，所以主键不再是 noteId。
+ *
+ * 为什么不是只给 note 做：文章和选题是模型花钱花时间生成的，
+ * 误删一次就没了，比丢一条随手记疼得多。
+ */
+@Entity(
+    tableName = "trashed",
+    indices = [Index(value = ["resourceType", "resourceId"], unique = true)],
+)
 data class TrashedEntity(
-    @PrimaryKey val noteId: String,
+    @PrimaryKey val id: String,
+    /** [TrashType] 的取值：note / article / script */
+    val resourceType: String,
+    val resourceId: String,
     val deletedAt: Long,
+    /** 恢复时按原位置插回，目前只有记录列表用得上 */
     val originalIndex: Int,
 )
+
+object TrashType {
+    const val NOTE = "note"
+    const val ARTICLE = "article"
+    const val SCRIPT = "script"
+}
 
 /**
  * 发芽报告。

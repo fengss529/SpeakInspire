@@ -106,11 +106,16 @@ data class SproutSection(
 
 /**
  * AI 成稿。永久留存于思考库——是资产不是消耗品。
- * 段落级 mineCount 用于「来源」视图：区分用户原话与 AI 补充。
+ * 段落级 mine 用于「来源」视图：区分用户原话与 AI 补充。
+ *
+ * **它是独立资源。** [sourceNoteId] 只是「出自哪条记录」，不是父子关系：
+ * 记录删了，这篇文章照样能读、能改、能转选题。
+ * [sourceText] 是生成时的原文快照，让文章永远能回答「这段话是在说什么」。
  */
 data class Article(
     val id: String,
-    val noteId: String,
+    val sourceNoteId: String? = null,
+    val sourceText: String = "",
     val title: String,
     val paragraphs: List<Paragraph>,
     val writtenAt: Long,
@@ -124,12 +129,16 @@ data class Paragraph(
 )
 
 /**
- * 拍摄文案。挂在文章之下，是可派生的拍摄计划——
- * 同一篇文章可以转成多个选题（不同角度）。
+ * 拍摄文案。**同样是独立资源。**
+ *
+ * 一篇文章可以拆出多个选题（不同角度），但选题拆好之后就自己活着：
+ * 文章被删，已经拆好的分镜还能拿去拍。
+ * [sourceTitle] 是文章标题快照，让选题脱离文章后仍能自报家门。
  */
 data class Script(
     val id: String,
-    val articleId: String,
+    val sourceArticleId: String? = null,
+    val sourceTitle: String = "",
     val angle: String,
     val sections: List<Section>,
     val createdAt: Long,

@@ -51,7 +51,7 @@ class DeepeningFlowTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, FakeSproutDao())
+        repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, FakeSproutDao(), FakeTrashedDao())
         ai = FakeAiService()
         probeStore = InMemoryProbeMethodStore()
     }
@@ -82,7 +82,8 @@ class DeepeningFlowTest {
             listOf(
                 ArticleEntity(
                     id = articleId,
-                    noteId = noteId,
+                    sourceNoteId = noteId,
+                    sourceText = "我明明准备过，但张嘴就卡住",
                     title = "准备过，为什么还是卡住",
                     paragraphsJson = """[{"text":"我准备了整整一周","mine":true}]""",
                     writtenAt = 2_000L,
@@ -476,7 +477,7 @@ class DeepeningFlowTest {
         assertEquals(
             "选题必须挂在真实文章 id 上，否则选题 tab 永远看不到它",
             "a_n1",
-            saved.first().articleId,
+            saved.first().sourceArticleId,
         )
         assertNotNull("存完要立刻切到已保存视图", vm.state.value.existingScript)
         assertTrue(vm.state.value.hasExisting)

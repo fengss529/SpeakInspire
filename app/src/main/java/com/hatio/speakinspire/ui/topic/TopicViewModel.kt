@@ -142,7 +142,10 @@ class TopicViewModel @Inject constructor(
         viewModelScope.launch {
             val script = Script(
                 id = UUID.randomUUID().toString(),
-                articleId = current.articleId,
+                // 出处只是引用，没有外键：文章删了，这条分镜照样能拿去拍
+                sourceArticleId = current.articleId,
+                // 标题快照让选题脱离文章后仍能自报家门
+                sourceTitle = current.articleTitle,
                 angle = angle.title,
                 sections = outline.sections.map { s ->
                     Section(

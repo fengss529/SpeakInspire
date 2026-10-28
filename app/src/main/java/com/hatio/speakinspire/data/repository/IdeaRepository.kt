@@ -11,6 +11,8 @@ import com.hatio.speakinspire.data.local.NoteEntity
 import com.hatio.speakinspire.data.local.ScriptDao
 import com.hatio.speakinspire.data.local.SimpleJson
 import com.hatio.speakinspire.data.local.SproutDao
+import com.hatio.speakinspire.data.local.TrashType
+import com.hatio.speakinspire.data.local.TrashedDao
 import com.hatio.speakinspire.data.local.TrashedEntity
 import com.hatio.speakinspire.data.local.toEntity
 import com.hatio.speakinspire.data.local.toIdeaView
@@ -43,13 +45,18 @@ class IdeaRepository(
     private val articleDao: ArticleDao,
     private val scriptDao: ScriptDao,
     private val sproutDao: SproutDao,
+    private val trashedDao: TrashedDao,
 ) {
 
     /**
      * 观察全部想法（已排除回收站）。
      *
      * 注意这里 join 了五路查询——任何一张表变化都会触发重算，
-     * 所以 8 个派生状态永远是算出来的，不存在过期的缓存。
+     * 所以派生状态永远是算出来的，不存在过期的缓存。
+     *
+     * ⚠️ `sourceNoteId` / `sourceArticleId` 是**可空**的（资源独立后允许悬空），
+     * 所以不能直接 associateBy——null 会变成一个键，把一堆孤儿资源挤在一起。
+     * 一律走 mapNotNull 丢掉空引用。
      */
     fun observeIdeas(): Flow<List<IdeaView>> = combine(
         noteDao.observeActive(),
@@ -59,8 +66,10 @@ class IdeaRepository(
         sproutDao.observeAll(),
     ) { notes, deepenings, articles, scripts, sprouts ->
         val deepeningByNote = deepenings.groupBy { it.noteId }
-        val articleByNote = articles.associateBy { it.noteId }
-        val scriptsByArticle = scripts.groupBy { it.articleId }
+        val articleByNote = articles.mapNotNull { a -> a.sourceNoteId?.let { it to a } }.toMap()
+        val scriptsByArticle = scripts
+            .mapNotNull { s -> s.sourceArticleId?.let { it to s } }
+            .groupBy({ it.first }, { it.second })
         val sproutsByNote = sprouts.groupBy { it.noteId }
 
         notes.map { entity ->
@@ -114,8 +123,11 @@ class IdeaRepository(
         withContext(Dispatchers.IO) {
             val notes = noteDao.findAllActive()
             val deepenings = deepeningDao.findAll().groupBy { it.noteId }
-            val articles = articleDao.findAll().associateBy { it.noteId }
-            val scripts = scriptDao.findAll().groupBy { it.articleId }
+            val articles = articleDao.findAll()
+                .mapNotNull { a -> a.sourceNoteId?.let { it to a } }.toMap()
+            val scripts = scriptDao.findAll()
+                .mapNotNull { s -> s.sourceArticleId?.let { it to s } }
+                .groupBy({ it.first }, { it.second })
             val sprouts = sproutDao.findAll().groupBy { it.noteId }
             notes.map { entity ->
                 val note = entity.toModel()
@@ -250,25 +262,48 @@ class IdeaRepository(
 
     // ---------- 删除与回收站 ----------
 
-    suspend fun moveToTrash(noteId: String, originalIndex: Int = 0) {
-        noteDao.trash(
+    /**
+     * 三种资源共用一个回收站，靠 [type] 区分。
+     *
+     * 注意：**移入回收站不等于删除**。记录进回收站时，
+     * 它的追问和发芽仍在（它们靠外键跟着记录走），
+     * 只有在回收站里「彻底删除」才会真删。
+     */
+    suspend fun moveToTrash(type: String, resourceId: String, originalIndex: Int = 0) {
+        trashedDao.insert(
             TrashedEntity(
-                noteId = noteId,
+                id = "tr_${type}_$resourceId",
+                resourceType = type,
+                resourceId = resourceId,
                 deletedAt = System.currentTimeMillis(),
                 originalIndex = originalIndex,
             )
         )
     }
 
-    suspend fun restoreFromTrash(noteId: String) = noteDao.untrash(noteId)
+    suspend fun restoreFromTrash(type: String, resourceId: String) {
+        trashedDao.remove(type, resourceId)
+    }
 
-    /** 彻底删除——只在回收站保留期满后由清理任务调用 */
-    suspend fun purge(noteId: String) = noteDao.hardDelete(noteId)
+    /** 彻底删除。只删指定的那一个资源，**不碰其他资源** */
+    suspend fun purge(type: String, resourceId: String) {
+        when (type) {
+            TrashType.NOTE -> noteDao.hardDelete(resourceId)
+            TrashType.ARTICLE -> articleDao.delete(resourceId)
+            TrashType.SCRIPT -> scriptDao.delete(resourceId)
+            else -> return
+        }
+        trashedDao.remove(type, resourceId)
+    }
 
-    fun observeTrashed(): Flow<List<TrashedEntity>> =
-        noteDao.observeTrashed()
+    fun observeTrashed(): Flow<List<TrashedEntity>> = trashedDao.observeAll()
+
+    suspend fun findTrashed(): List<TrashedEntity> = trashedDao.findAll()
 
     suspend fun purgeExpiredTrash(retentionMs: Long) {
-        noteDao.purgeTrashedBefore(System.currentTimeMillis() - retentionMs)
+        val before = System.currentTimeMillis() - retentionMs
+        trashedDao.findAll()
+            .filter { it.deletedAt < before }
+            .forEach { purge(it.resourceType, it.resourceId) }
     }
 }

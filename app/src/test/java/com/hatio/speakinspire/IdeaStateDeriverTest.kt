@@ -52,7 +52,7 @@ class IdeaStateDeriverTest {
 
     private fun article() = Article(
         id = "a1",
-        noteId = "n1",
+        sourceNoteId = "n1",
         title = "我的口头禅暴露了思维速度",
         paragraphs = listOf(Paragraph("我说这话时在想别的", true)),
         writtenAt = t + 2000,
@@ -60,7 +60,7 @@ class IdeaStateDeriverTest {
 
     private fun script(shot: Boolean = false, parked: Boolean = false) = Script(
         id = "s1",
-        articleId = "a1",
+        sourceArticleId = "a1",
         angle = "直接挑衅",
         sections = listOf(Section("开场", 8, listOf("你说话是不是总带然后"))),
         createdAt = t + 3000,

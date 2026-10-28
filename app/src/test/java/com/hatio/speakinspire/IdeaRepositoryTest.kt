@@ -10,6 +10,8 @@ import com.hatio.speakinspire.data.local.ScriptEntity
 import com.hatio.speakinspire.data.local.ArticleEntity
 import com.hatio.speakinspire.data.local.SproutDao
 import com.hatio.speakinspire.data.local.SproutEntity
+import com.hatio.speakinspire.data.local.TrashType
+import com.hatio.speakinspire.data.local.TrashedDao
 import com.hatio.speakinspire.data.local.TrashedEntity
 import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.NoteSource
@@ -33,9 +35,10 @@ import org.junit.Test
  * 内存版 DAO —— Room 需要 Android 环境，
  * 但 Repository 的聚合与状态派生逻辑是纯的，不必依赖真实数据库。
  */
-class FakeNoteDao : NoteDao {
+class FakeNoteDao(
+    private val trashed: FakeTrashedDao = FakeTrashedDao(),
+) : NoteDao {
     private val notes = MutableStateFlow<List<NoteEntity>>(emptyList())
-    private val trashed = MutableStateFlow<List<TrashedEntity>>(emptyList())
 
     override suspend fun upsert(note: NoteEntity) {
         notes.value = notes.value.filterNot { it.id == note.id } + note
@@ -44,18 +47,16 @@ class FakeNoteDao : NoteDao {
     override suspend fun findById(id: String): NoteEntity? = notes.value.firstOrNull { it.id == id }
     override fun observeAll(): Flow<List<NoteEntity>> = notes
     override fun observeActive(): Flow<List<NoteEntity>> =
-        MutableStateFlow(
-            notes.value.filter { n -> trashed.value.none { it.noteId == n.id } }
-        ).let { flow ->
-            kotlinx.coroutines.flow.combine(notes, trashed) { n, t ->
-                n.filter { e -> t.none { it.noteId == e.id } }
-            }
+        kotlinx.coroutines.flow.combine(notes, trashed.rows) { n, t ->
+            n.filter { e -> t.none { it.resourceType == TrashType.NOTE && it.resourceId == e.id } }
         }
 
     /** 一次性版：与 observeActive 同一条过滤规则，别写成两份 */
     override suspend fun findAllActive(): List<NoteEntity> =
         notes.value
-            .filter { n -> trashed.value.none { it.noteId == n.id } }
+            .filter { n ->
+                trashed.rows.value.none { it.resourceType == TrashType.NOTE && it.resourceId == n.id }
+            }
             .sortedByDescending { it.createdAt }
 
     override suspend fun exists(id: String): Boolean = findById(id) != null
@@ -63,18 +64,6 @@ class FakeNoteDao : NoteDao {
         notes.value = notes.value.filterNot { it.id == id }
     }
 
-    override suspend fun trash(entry: TrashedEntity) {
-        trashed.value = trashed.value.filterNot { it.noteId == entry.noteId } + entry
-    }
-
-    override suspend fun untrash(noteId: String) {
-        trashed.value = trashed.value.filterNot { it.noteId == noteId }
-    }
-
-    override fun observeTrashed(): Flow<List<TrashedEntity>> = trashed
-    override suspend fun purgeTrashedBefore(before: Long) {
-        trashed.value = trashed.value.filter { it.deletedAt >= before }
-    }
 
     fun seed(list: List<NoteEntity>) { notes.value = list }
 }
@@ -94,13 +83,39 @@ class FakeDeepeningDao : DeepeningDao {
     fun seed(list: List<DeepeningEntity>) { items.value = list }
 }
 
+/** 三种资源共用一张回收站表，所以假实现也只做一份 */
+class FakeTrashedDao : TrashedDao {
+    val rows = MutableStateFlow<List<TrashedEntity>>(emptyList())
+
+    override suspend fun insert(entry: TrashedEntity) {
+        rows.value = rows.value.filterNot {
+            it.resourceType == entry.resourceType && it.resourceId == entry.resourceId
+        } + entry
+    }
+
+    override suspend fun remove(type: String, resourceId: String) {
+        rows.value = rows.value.filterNot {
+            it.resourceType == type && it.resourceId == resourceId
+        }
+    }
+
+    override fun observeAll(): Flow<List<TrashedEntity>> = rows
+    override suspend fun findAll(): List<TrashedEntity> = rows.value
+    override suspend fun contains(type: String, resourceId: String): Boolean =
+        rows.value.any { it.resourceType == type && it.resourceId == resourceId }
+
+    override suspend fun purgeBefore(before: Long) {
+        rows.value = rows.value.filter { it.deletedAt >= before }
+    }
+}
+
 class FakeArticleDao : ArticleDao {
     private val items = MutableStateFlow<List<ArticleEntity>>(emptyList())
     override suspend fun upsert(entity: ArticleEntity) {
         items.value = items.value.filterNot { it.id == entity.id } + entity
     }
     override suspend fun findByNote(noteId: String) =
-        items.value.firstOrNull { it.noteId == noteId }
+        items.value.firstOrNull { it.sourceNoteId == noteId }
     override fun observeAll(): Flow<List<ArticleEntity>> = items
     override suspend fun findAll(): List<ArticleEntity> = items.value
     override suspend fun updateContent(id: String, json: String) {
@@ -121,7 +136,7 @@ class FakeScriptDao : ScriptDao {
         items.value = items.value.filterNot { it.id == entity.id } + entity
     }
     override suspend fun findByArticle(articleId: String) =
-        items.value.filter { it.articleId == articleId }
+        items.value.filter { it.sourceArticleId == articleId }
     override fun observeAll(): Flow<List<ScriptEntity>> = items
     override suspend fun findAll(): List<ScriptEntity> = items.value
     override suspend fun markShot(id: String, timestamp: Long) {
@@ -188,12 +203,15 @@ class FakeSproutDao : SproutDao {
  */
 class IdeaRepositoryTest {
 
-    private val noteDao = FakeNoteDao()
+    private val trashedDao = FakeTrashedDao()
+    private val noteDao = FakeNoteDao(trashedDao)
     private val deepeningDao = FakeDeepeningDao()
     private val articleDao = FakeArticleDao()
     private val scriptDao = FakeScriptDao()
     private val sproutDao = FakeSproutDao()
-    private val repo = IdeaRepository(noteDao, deepeningDao, articleDao, scriptDao, sproutDao)
+    private val repo = IdeaRepository(
+        noteDao, deepeningDao, articleDao, scriptDao, sproutDao, trashedDao,
+    )
 
     private val t = 1_700_000_000_000L
 
@@ -203,13 +221,14 @@ class IdeaRepositoryTest {
     )
 
     private fun seedArticle(noteId: String) = ArticleEntity(
-        id = "a_$noteId", noteId = noteId, title = "文章",
+        id = "a_$noteId", sourceNoteId = noteId, sourceText = "正文$noteId", title = "文章",
         paragraphsJson = """[{"t":"我说的","m":true}]""",
         writtenAt = t, edited = false,
     )
 
     private fun seedScript(articleId: String) = ScriptEntity(
-        id = "s_$articleId", articleId = articleId, angle = "挑衅", rationale = "",
+        id = "s_$articleId", sourceArticleId = articleId, sourceTitle = "文章",
+        angle = "挑衅", rationale = "",
         sectionsJson = "[]", createdAt = t, shotAt = null, parked = false, note = "",
     )
 
@@ -437,29 +456,29 @@ class IdeaRepositoryTest {
     @Test
     fun `移入回收站不删数据`() = runBlocking {
         val id = repo.createNote("标题", "正文")
-        repo.moveToTrash(id)
+        repo.moveToTrash(TrashType.NOTE, id)
         assertNotNull("回收站的意义就是可恢复", noteDao.findById(id))
     }
 
     @Test
     fun `从回收站恢复`() = runBlocking {
         val id = repo.createNote("标题", "正文")
-        repo.moveToTrash(id)
-        repo.restoreFromTrash(id)
+        repo.moveToTrash(TrashType.NOTE, id)
+        repo.restoreFromTrash(TrashType.NOTE, id)
         assertNotNull(noteDao.findById(id))
     }
 
     @Test
     fun `彻底删除才真删`() = runBlocking {
         val id = repo.createNote("标题", "正文")
-        repo.purge(id)
+        repo.purge(TrashType.NOTE, id)
         assertNull(noteDao.findById(id))
     }
 
     @Test
     fun `刚删的不会被保留期清理`() = runBlocking {
         val id = repo.createNote("刚删", "内容")
-        repo.moveToTrash(id)
+        repo.moveToTrash(TrashType.NOTE, id)
         // 保留期 30天，刚删的当然还在
         repo.purgeExpiredTrash(retentionMs = 30L * 24 * 60 * 60 * 1000)
         assertFalse("刚删的不能被清掉", repo.observeTrashed().first().isEmpty())

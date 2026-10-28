@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ProviderEntity::class,
         SproutEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class SpeakInspireDatabase : RoomDatabase() {
@@ -25,6 +25,7 @@ abstract class SpeakInspireDatabase : RoomDatabase() {
     abstract fun scriptDao(): ScriptDao
     abstract fun providerDao(): ProviderDao
     abstract fun sproutDao(): SproutDao
+    abstract fun trashedDao(): TrashedDao
 
     companion object {
         const val NAME = "speakinspire.db"
@@ -97,6 +98,128 @@ abstract class SpeakInspireDatabase : RoomDatabase() {
             }
         }
 
-        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        /**
+         * v3 → v4：三种资源解耦。
+         *
+         * article 去外键（改存 sourceNoteId + sourceText 快照），
+         * script 去外键（改存 sourceArticleId + sourceTitle 快照），
+         * trashed 从「只能装记录」扩成「能装三种资源」。
+         *
+         * ## ⚠️ 三条顺序不能换
+         *
+         * SQLite 的 `DROP TABLE` 在开启外键时**会触发级联动作**。
+         * 若先重建 article，`DROP TABLE article` 会把 script 全部删掉，
+         * 而且**不报任何错**——用户会以为选题凭空消失。
+         *
+         * 所以必须：
+         * 1. 先重建 script（此时它已不指向 article）
+         * 2. 再重建 article（此时已无子表指向它）
+         * 3. 最后 trashed
+         *
+         * ## 列类型必须与实体完全一致
+         *
+         * Room 在迁移后会跑 `validateMigration` 逐列比对（名字、类型、NOT NULL、主键、索引）。
+         * 少一个索引、把 INTEGER 写成 TEXT，启动时直接抛
+         * `Migration didn't properly handle`。
+         * Boolean → INTEGER，Long → INTEGER。
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // ① script：去掉指向 article 的外键
+                db.execSQL(
+                    """
+                    CREATE TABLE script_new (
+                        id TEXT NOT NULL,
+                        sourceArticleId TEXT,
+                        sourceTitle TEXT NOT NULL,
+                        angle TEXT NOT NULL,
+                        rationale TEXT NOT NULL,
+                        sectionsJson TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        shotAt INTEGER,
+                        parked INTEGER NOT NULL,
+                        note TEXT NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                // 外键还在时把标题快照带过去——这一步之后再 join 就查不到了
+                db.execSQL(
+                    """
+                    INSERT INTO script_new
+                        (id, sourceArticleId, sourceTitle, angle, rationale,
+                         sectionsJson, createdAt, shotAt, parked, note)
+                    SELECT s.id, s.articleId, COALESCE(a.title, ''), s.angle, s.rationale,
+                           s.sectionsJson, s.createdAt, s.shotAt, s.parked, s.note
+                    FROM script s LEFT JOIN article a ON a.id = s.articleId
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE script")
+                db.execSQL("ALTER TABLE script_new RENAME TO script")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_script_sourceArticleId ON script(sourceArticleId)"
+                )
+
+                // ② article：去掉指向 note 的外键，带一份原文快照
+                db.execSQL(
+                    """
+                    CREATE TABLE article_new (
+                        id TEXT NOT NULL,
+                        sourceNoteId TEXT,
+                        sourceText TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        paragraphsJson TEXT NOT NULL,
+                        writtenAt INTEGER NOT NULL,
+                        edited INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO article_new
+                        (id, sourceNoteId, sourceText, title, paragraphsJson, writtenAt, edited)
+                    SELECT a.id, a.noteId, COALESCE(n.body, ''), a.title,
+                           a.paragraphsJson, a.writtenAt, a.edited
+                    FROM article a LEFT JOIN note n ON n.id = a.noteId
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE article")
+                db.execSQL("ALTER TABLE article_new RENAME TO article")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_article_sourceNoteId ON article(sourceNoteId)"
+                )
+
+                // ③ trashed：扩成能装三种资源。旧的都当记录处理
+                db.execSQL(
+                    """
+                    CREATE TABLE trashed_new (
+                        id TEXT NOT NULL,
+                        resourceType TEXT NOT NULL,
+                        resourceId TEXT NOT NULL,
+                        deletedAt INTEGER NOT NULL,
+                        originalIndex INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                // id 规则必须与 IdeaRepository.moveToTrash 的 "tr_${'$'}{type}_${'$'}{resourceId}" 一致，
+                // 否则迁移出来的旧行和新建的行长得不一样，将来按 id 查会漏
+                db.execSQL(
+                    """
+                    INSERT INTO trashed_new (id, resourceType, resourceId, deletedAt, originalIndex)
+                    SELECT 'tr_note_' || noteId, 'note', noteId, deletedAt, originalIndex FROM trashed
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE trashed")
+                db.execSQL("ALTER TABLE trashed_new RENAME TO trashed")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_trashed_resourceType_resourceId " +
+                        "ON trashed(resourceType, resourceId)"
+                )
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
     }
 }

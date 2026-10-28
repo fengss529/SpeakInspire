@@ -54,7 +54,8 @@ class MarkdownExporterTest {
         ),
         article = Article(
             id = "a_n1",
-            noteId = "n1",
+            sourceNoteId = "n1",
+            sourceText = "我提前背了稿子，上台全忘了",
             title = "忘词的那三秒",
             paragraphs = listOf(
                 Paragraph("我提前背了稿子。", mine = true),
@@ -65,7 +66,8 @@ class MarkdownExporterTest {
         scripts = listOf(
             Script(
                 id = "s1",
-                articleId = "a_n1",
+                sourceArticleId = "a_n1",
+                sourceTitle = "忘词的那三秒",
                 angle = "从忘词那三秒讲起",
                 sections = listOf(
                     Section(
