@@ -43,17 +43,20 @@ class NoteDetailViewModel @Inject constructor(
 
     fun load(noteId: String) {
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
+            val view = repo.findNote(noteId) ?: return@launch
             val fmt = SimpleDateFormat("yyyy 年 M 月 d 日 HH:mm", Locale.CHINA)
             _state.value = NoteDetailUiState(
                 noteId = noteId,
-                title = idea.note.title,
-                body = idea.note.body,
-                createdLabel = fmt.format(Date(idea.note.createdAt)),
-                rounds = idea.deepening?.rounds ?: emptyList(),
-                hasArticle = idea.article != null,
-                sproutCount = idea.sproutCount,
-                latestSproutTitle = idea.latestSprout?.title.orEmpty(),
+                title = view.note.title,
+                body = view.note.body,
+                createdLabel = fmt.format(Date(view.note.createdAt)),
+                rounds = view.deepening?.rounds ?: emptyList(),
+                // 文章是独立资源，这里只知道「我生成过一篇」，
+                // 它可能已经被单独删了——所以只记 id，不假装它一定在
+                hasArticle = view.articleId != null,
+                articleId = view.articleId,
+                sproutCount = view.sproutCount,
+                latestSproutTitle = view.latestSprout?.title.orEmpty(),
             )
         }
     }
@@ -64,12 +67,14 @@ class NoteDetailViewModel @Inject constructor(
      * 失败时把话说明白：用户点了一下什么都没有，会以为按钮坏了。
      */
     fun exportMarkdown() {
-        val noteId = _state.value.noteId
-        if (noteId.isBlank()) return
+        val current = _state.value
+        if (current.noteId.isBlank()) return
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
-            val md = MarkdownExporter.note(idea)
-            val name = MarkdownExporter.fileName(idea.note.title.ifBlank { "随手记" })
+            // 单条导出也要读出它派生出去的文章与选题，
+            // 所以仍然走全库快照——少维护一条「只导一条」的查询路径
+            val library = repo.exportSnapshot()
+            val md = MarkdownExporter.note(library, current.noteId)
+            val name = MarkdownExporter.fileName(current.title.ifBlank { "随手记" })
             val ok = MarkdownShare.share(context, name, md)
             _state.value = _state.value.copy(
                 exportMessage = if (ok) null else "没能生成导出文件，再试一次。",
@@ -89,6 +94,8 @@ data class NoteDetailUiState(
     val createdLabel: String = "",
     val rounds: List<Round> = emptyList(),
     val hasArticle: Boolean = false,
+    /** 由这条记录生成的文章 id。文章已被单独删掉时为 null */
+    val articleId: String? = null,
     /** 这条记录发过几次芽 */
     val sproutCount: Int = 0,
     val latestSproutTitle: String = "",

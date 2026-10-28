@@ -68,6 +68,14 @@ fun ComposeScreen(
     onToggleSource: () -> Unit,
     onSave: () -> Unit,
     onGoBackToDeepening: () -> Unit,
+    /**
+     * 能不能「回去再聊」。
+     *
+     * 文章独立之后，它可能压根没有来源记录（记录被删了），
+     * 这时那个按钮点了也没有目的地——干脆不显示，
+     * 好过点一下什么都不发生。
+     */
+    canReopenDeepening: Boolean = true,
     /** 转成拍摄选题。文章存好之后才给这个入口 */
     onConvert: () -> Unit = {},
     /** 导出成 Markdown */
@@ -142,6 +150,7 @@ fun ComposeScreen(
                         onConvert = onConvert,
                         onReopenDeepening = onGoBackToDeepening,
                         onExport = onExport,
+                        showReopen = canReopenDeepening,
                     )
                 } else {
                     SaveBar(
@@ -311,6 +320,7 @@ private fun ArticleActions(
     onConvert: () -> Unit,
     onReopenDeepening: () -> Unit,
     onExport: () -> Unit,
+    showReopen: Boolean,
 ) {
     Column(
         Modifier
@@ -330,11 +340,14 @@ private fun ArticleActions(
         }
         Spacer(Modifier.height(Spacing.s))
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            OutlinedButton(
-                onClick = onReopenDeepening,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("回去再聊", fontSize = 13.sp)
+            // 没有来源记录时（记录已删），「回去再聊」没有目的地
+            if (showReopen) {
+                OutlinedButton(
+                    onClick = onReopenDeepening,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("回去再聊", fontSize = 13.sp)
+                }
             }
             OutlinedButton(
                 onClick = onExport,

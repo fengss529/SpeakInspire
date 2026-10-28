@@ -19,8 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.hatio.speakinspire.domain.IdeaState
-import com.hatio.speakinspire.domain.IdeaStateDeriver
 import com.hatio.speakinspire.ui.MainViewModel
 import com.hatio.speakinspire.ui.compose.ComposeViewModel
 import com.hatio.speakinspire.ui.deepening.DeepeningViewModel
@@ -39,6 +37,8 @@ import com.hatio.speakinspire.ui.screens.SproutScreen
 import com.hatio.speakinspire.ui.screens.StatScreen
 import com.hatio.speakinspire.ui.screens.ThinkScreen
 import com.hatio.speakinspire.ui.screens.TopicScreen
+import com.hatio.speakinspire.ui.screens.TrashScreen
+import com.hatio.speakinspire.ui.trash.TrashViewModel
 import com.hatio.speakinspire.ui.settings.SettingsViewModel
 import com.hatio.speakinspire.ui.sprout.SproutViewModel
 import com.hatio.speakinspire.ui.theme.SpeakInspireTheme
@@ -99,6 +99,9 @@ private sealed interface Route {
     /** [from] 决定返回键回哪一页 */
     data class Settings(val from: Route? = null) : Route
 
+    /** 回收站。从设置页进，返回也回设置页 */
+    data object Trash : Route
+
     /** 记录条详情——点开记录条先进这里 */
     data class Detail(val noteId: String) : Route
 
@@ -108,12 +111,19 @@ private sealed interface Route {
     data class Deepening(val noteId: String) : Route
 
     /**
-     * 成文 / 文章视图。
+     * 文章视图。
      *
      * [fromHome] 区分入口：从思考 tab 直接点开的是**已经存过的文章**，
      * 返回该回列表；从追问页走上来的，返回该回追问页。
      */
     data class Compose(val noteId: String, val fromHome: Boolean = false) : Route
+
+    /**
+     * 直接按文章 id 打开一篇已存在的文章。从「思考」tab 进来走这条。
+     *
+     * 文章独立之后它可能没有来源记录，用 noteId 反查会打不开。
+     */
+    data class Article(val articleId: String) : Route
 
     /** 发芽报告 */
     data class Sprout(val noteId: String) : Route
@@ -121,10 +131,14 @@ private sealed interface Route {
     /**
      * 拍摄骨架页。
      *
+     * [articleId] 是文章 id，不是记录 id——选题挂在文章上。
      * [fromHome] 区分入口：从选题 tab 直接点进来的，返回该回选题列表；
-     * 从成文页一路走下来的，返回该回成文页。
+     * 从文章页一路走下来的，返回该回文章页。
      */
-    data class Convert(val noteId: String, val fromHome: Boolean = false) : Route
+    data class Convert(val articleId: String) : Route
+
+    /** 单独打开一个已有选题的骨架。从选题 tab 点卡片进来走这条 */
+    data class Topic(val scriptId: String) : Route
 
     /** 每一页的「上一层」 */
     val parent: Route?
@@ -132,12 +146,15 @@ private sealed interface Route {
             Home -> null
             is NewNote -> returnTo
             is Settings -> from
+            Trash -> Settings(Home)
             is Detail -> Home
             is Edit -> Detail(noteId)
             is Deepening -> Detail(noteId)
             is Compose -> if (fromHome) Home else Deepening(noteId)
+            is Article -> Home
             is Sprout -> Detail(noteId)
-            is Convert -> if (fromHome) Home else Compose(noteId)
+            is Convert -> Home
+            is Topic -> Home
         }
 }
 
@@ -169,35 +186,36 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 val current = tab ?: MainTab.RECORD
                 when (current) {
                     MainTab.RECORD -> RecordScreen(
-                        ideas = state.record,
+                        notes = state.record,
                         // 先看详情再决定做什么。
                         // 之前直接进追问页，用户看不到自己记了什么，
                         // 也不知道该输入还是该等 AI 问。
                         onOpen = { id -> route = Route.Detail(id) },
                         onSettings = openSettings,
+                        onDelete = { vm.moveNoteToTrash(it) },
                     )
                     MainTab.THINK -> ThinkScreen(
-                        ideas = state.think,
-                        // 思考库里的条目已经有文章了，直接进文章视图。
-                        // fromHome 让它返回时回到列表而不是追问页
-                        onOpen = { id -> route = Route.Compose(id, fromHome = true) },
+                        articles = state.think,
+                        // 文章是独立资源，按自己的 id 打开——
+                        // 来源记录被删掉的文章也能进得去
+                        onOpen = { id -> route = Route.Article(id) },
                         onSettings = openSettings,
+                        onDelete = { vm.moveArticleToTrash(it) },
                     )
                     MainTab.TOPIC -> TopicScreen(
-                        ideas = state.topic,
-                        // 选题 tab 里点开的是「这条待拍的骨架」，
-                        // 不是再跟 AI 聊一轮——之前错进了追问页
-                        onOpen = { id -> route = Route.Convert(id, fromHome = true) },
+                        topics = state.topic,
+                        // 点开的是这个选题自己的骨架，不是再跟 AI 聊一轮
+                        onOpen = { id -> route = Route.Topic(id) },
                         onMarkShot = markShotHandler,
                         onPark = { vm.park(it) },
                         onUndoShot = { vm.undoShot(it) },
+                        onUnpark = { vm.unpark(it) },
                         onSettings = openSettings,
+                        onDelete = { vm.moveTopicToTrash(it) },
                     )
                     MainTab.STAT -> StatScreen(
                         stats = state.stats,
-                        pendingCount = state.allIdeas.count {
-                            IdeaStateDeriver.derive(it) == IdeaState.DEEPENED
-                        },
+                        pendingCount = state.pendingCount,
                         onSettings = openSettings,
                     )
                 }
@@ -231,6 +249,18 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onCancelAddModel = { svm.cancelAddModel() },
                 onExportAll = { svm.exportAll() },
                 onExportMessageConsumed = { svm.consumeExportMessage() },
+                onOpenTrash = { route = Route.Trash },
+            )
+        }
+
+        Route.Trash -> {
+            val tvm: TrashViewModel = hiltViewModel()
+            val items by tvm.items.collectAsStateWithLifecycle()
+            TrashScreen(
+                items = items,
+                onBack = { route = r.parent ?: Route.Home },
+                onRestore = { tvm.restore(it) },
+                onPurge = { tvm.purge(it) },
             )
         }
 
@@ -252,7 +282,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onEdit = { route = Route.Edit(r.noteId) },
                 onDeepen = { route = Route.Deepening(r.noteId) },
                 onSprout = { route = Route.Sprout(r.noteId) },
-                onViewArticle = { route = Route.Compose(r.noteId) },
+                // 文章 id 来自详情页状态，不在这里拼——
+                // 拼错一个字符就是一个打不开的页面
+                onViewArticle = {
+                    nstate.articleId?.let { route = Route.Article(it) }
+                },
                 onSettings = openSettings,
                 onExport = { nvm.exportMarkdown() },
                 onDismissMessage = { nvm.consumeExportMessage() },
@@ -288,9 +322,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
         }
 
         is Route.Convert -> {
-            val tvm: TopicViewModel = hiltViewModel(key = "topic_${r.noteId}")
+            val tvm: TopicViewModel = hiltViewModel(key = "topic_${r.articleId}")
             val tstate by tvm.state.collectAsStateWithLifecycle()
-            LaunchedEffect(r.noteId) { tvm.load(r.noteId) }
+            LaunchedEffect(r.articleId) { tvm.load(r.articleId) }
             ConvertTopicScreen(
                 state = tstate,
                 onBack = { route = r.parent ?: Route.Home },
@@ -302,6 +336,27 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onMarkShot = { tvm.markShot() },
                 onUndoShot = { tvm.undoShot() },
                 onPark = { tvm.park() },
+            )
+        }
+
+        is Route.Article -> {
+            val cvm: ComposeViewModel = hiltViewModel(key = "article_${r.articleId}")
+            val cstate by cvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.articleId) { cvm.loadArticle(r.articleId) }
+            ComposeScreen(
+                state = cstate,
+                onBack = { route = r.parent ?: Route.Home },
+                onRetry = { cvm.compose() },
+                onToggleSource = { cvm.toggleSourceMode() },
+                onSave = { cvm.save() },
+                // 来源记录可能已被删掉，这时「回去再聊」无处可去
+                canReopenDeepening = cstate.noteId.isNotBlank(),
+                onGoBackToDeepening = {
+                    if (cstate.noteId.isNotBlank()) route = Route.Deepening(cstate.noteId)
+                },
+                onConvert = { route = Route.Convert(cstate.articleId) },
+                onExport = { cvm.exportMarkdown() },
+                onSettings = openSettings,
             )
         }
 
@@ -325,10 +380,31 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onToggleSource = { cvm.toggleSourceMode() },
                 // 存完**不跳走**：留在文章页，把「接下来干什么」交给他
                 onSave = { cvm.save() },
-                onGoBackToDeepening = { route = Route.Deepening(r.noteId) },
-                onConvert = { route = Route.Convert(r.noteId) },
+                canReopenDeepening = true,
+                onGoBackToDeepening = { route = Route.Deepening(cstate.noteId) },
+                // 转选题要按**文章** id 走：选题挂在文章上，不挂在记录上
+                onConvert = { route = Route.Convert(cstate.articleId) },
                 onExport = { cvm.exportMarkdown() },
                 onSettings = openSettings,
+            )
+        }
+
+        is Route.Topic -> {
+            val tvm: TopicViewModel = hiltViewModel(key = "topic_script_${r.scriptId}")
+            val tstate by tvm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(r.scriptId) { tvm.loadTopic(r.scriptId) }
+            ConvertTopicScreen(
+                state = tstate,
+                onBack = { route = r.parent ?: Route.Home },
+                // 已经有一条选题了，重拆角度的意义不大，
+                // 但保留入口：用户可能想换个角度再存一条
+                onDerive = { tvm.rederive() },
+                onChooseAngle = { tvm.chooseAngle(it) },
+                onBackToAngles = { tvm.back() },
+                onSave = { tvm.saveScript() },
+                onMarkShot = { tvm.markShot() },
+                onUndoShot = { tvm.undoShot() },
+                onPark = { tvm.park() },
             )
         }
 

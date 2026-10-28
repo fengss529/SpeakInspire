@@ -35,14 +35,14 @@ private val LightColors = lightColorScheme(
 
 /** 状态色——对应 8 个派生状态 */
 object StatusColors {
-    val wait = Color(0xFF8B6FC7)      // 待深化
+    val wait = Color(0xFF8B6FC7)      // 记录（默认，不显示 chip）
     val ongoing = Color(0xFFB9A6F5)   // 深化中
     val deepened = Color(0xFF7C6BB0)  // 已深化
-    val articlEd = Color(0xFF6750A4)  // 已成文章
-    val topic = Color(0xFF5B8DEF)     // 待开拍
+    val articlEd = Color(0xFF6750A4)  // 已成文
+    val topic = Color(0xFF5B8DEF)     // 待开拍（默认，不显示 chip）
     val shot = Color(0xFF7FC8A9)      // 已拍摄
-    val parked = Color(0xFFA0A0A0)    // 先留着
-    val stale = Color(0xFFB0B0B0)     // 已过时
+    val parked = Color(0xFFA0A0A0)    // 搁置
+    val derived = Color(0xFFB0B0B0)   // 已派生
     val mine = Color(0xFF6750A4)      // 「你说的」
     val aiFill = Color(0xFFFFF4E0)    // 「AI 补」底色
 }

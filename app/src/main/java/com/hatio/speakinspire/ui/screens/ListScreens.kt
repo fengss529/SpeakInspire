@@ -17,29 +17,43 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.hatio.speakinspire.domain.IdeaStateDeriver
-import com.hatio.speakinspire.domain.IdeaView
+import com.hatio.speakinspire.data.export.displayTitle
+import com.hatio.speakinspire.domain.ArticleView
+import com.hatio.speakinspire.domain.NoteView
+import com.hatio.speakinspire.ui.components.CardAction
 import com.hatio.speakinspire.ui.components.EmptyHint
 import com.hatio.speakinspire.ui.components.IdeaCard
+import com.hatio.speakinspire.ui.components.toChip
+import com.hatio.speakinspire.ui.components.ConfirmDeleteDialog
 import com.hatio.speakinspire.ui.theme.Spacing
 
 /**
- * 「记录」tab —— 随手记 + 待深化。
+ * 「记录」tab —— 我记下过的东西。
  *
  * 这是最高频的页面，所以：
  * - 顶部只有标题和设置按钮，不塞别的东西
- * - 列表默认无 chip（待深化不需要标），扫一眼就知道哪些没聊过
+ * - 列表默认无 chip（「记录」是默认状态），扫一眼就知道哪些没聊过
+ *
+ * 它是「我记过什么」的清单，**不是流水线的一环**：
+ * 深化完、成完文，这条仍然留在这里。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordScreen(
-    ideas: List<IdeaView>,
+    notes: List<NoteView>,
     onOpen: (String) -> Unit,
     onSettings: () -> Unit,
+    onDelete: (String) -> Unit = {},
 ) {
+    var pendingDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -55,7 +69,7 @@ fun RecordScreen(
             )
         },
     ) { padding ->
-        if (ideas.isEmpty()) {
+        if (notes.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -80,33 +94,51 @@ fun RecordScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(Spacing.m),
             ) {
-                items(ideas, key = { it.note.id }) { idea ->
+                items(notes, key = { it.note.id }) { view ->
                     IdeaCard(
-                        title = idea.note.title.ifBlank { "（无标题）" },
-                        preview = idea.note.body,
-                        state = IdeaStateDeriver.derive(idea),
-                        timeLabel = idea.note.createdAt.toDateLabel(),
-                        onClick = { onOpen(idea.note.id) },
+                        title = view.note.displayTitle,
+                        preview = view.note.body,
+                        chip = view.state.toChip(),
+                        timeLabel = view.note.createdAt.toDateLabel(),
+                        actions = listOf(
+                            CardAction("删除") { pendingDelete = view.note.id to view.note.displayTitle }
+                        ),
+                        onClick = { onOpen(view.note.id) },
                     )
                 }
             }
         }
     }
+
+    pendingDelete?.let { (id, title) ->
+        ConfirmDeleteDialog(
+            title = title,
+            message = "移入回收站，30 天内可以恢复。\n追问和发芽会跟着一起走——它们是这条记录自己的东西。",
+            onConfirm = {
+                onDelete(id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+    }
 }
 
 /**
- * 「思考」tab —— 已成文章的作品。
+ * 「思考」tab —— 文章独立成条。
  *
- * 文章是资产不是消耗品，所以这里按成稿时间倒序，
- * 「先留着」的自动沉底。
+ * 这里以前显示的是「有文章的记录」，所以删一篇文章其实是删一条记录。
+ * 现在每一条就是文章本身，按成稿时间倒序，没有状态。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThinkScreen(
-    ideas: List<IdeaView>,
+    articles: List<ArticleView>,
     onOpen: (String) -> Unit,
     onSettings: () -> Unit = {},
+    onDelete: (String) -> Unit = {},
 ) {
+    var pendingDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,7 +154,7 @@ fun ThinkScreen(
             )
         },
     ) { padding ->
-        if (ideas.isEmpty()) {
+        if (articles.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 verticalArrangement = Arrangement.Center,
@@ -145,21 +177,42 @@ fun ThinkScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(Spacing.m),
             ) {
-                items(ideas, key = { it.note.id }) { idea ->
+                items(articles, key = { it.article.id }) { view ->
                     IdeaCard(
-                        title = idea.article?.title ?: idea.note.title,
-                        preview = idea.article?.paragraphs?.firstOrNull()?.text
-                            ?: idea.note.body,
-                        state = IdeaStateDeriver.derive(idea),
-                        timeLabel = idea.article?.writtenAt?.toDateLabel() ?: "",
-                        tagLine = if (idea.scripts.isNotEmpty()) {
-                            "已转 ${idea.scripts.size} 个选题"
-                        } else null,
-                        onClick = { onOpen(idea.note.id) },
+                        title = view.article.title.ifBlank { "（无标题）" },
+                        preview = view.preview,
+                        timeLabel = view.article.writtenAt.toDateLabel(),
+                        // 两个标签是**同时成立**的两件事，不能用一个 when 互相盖掉：
+                        // 一篇文章可以既转出了选题、出处记录又被删了。
+                        // 之前写成互斥的 when，「出处已删除」在转过选题之后就永远看不到了。
+                        tagLine = buildList {
+                            if (view.topicCount > 0) add("已转 ${view.topicCount} 个选题")
+                            // 要有过出处才谈得上「已删除」——本来就没有出处的文章
+                            // 说「原始记录已删除」是假话
+                            if (view.hadSource && !view.hasSource) add("原始记录已删除")
+                        }.joinToString(" · ").ifBlank { null },
+                        actions = listOf(
+                            CardAction("删除") {
+                                pendingDelete = view.article.id to view.article.title
+                            }
+                        ),
+                        onClick = { onOpen(view.article.id) },
                     )
                 }
             }
         }
+    }
+
+    pendingDelete?.let { (id, title) ->
+        ConfirmDeleteDialog(
+            title = title,
+            message = "移入回收站，30 天内可以恢复。\n由它转出的选题不会跟着消失。",
+            onConfirm = {
+                onDelete(id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
     }
 }
 

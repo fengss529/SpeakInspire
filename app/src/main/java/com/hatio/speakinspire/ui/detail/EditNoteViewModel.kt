@@ -34,7 +34,7 @@ class EditNoteViewModel @Inject constructor(
         if (_state.value.noteId == noteId && !_state.value.loadFailed) return
 
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: run {
+            val idea = repo.findNote(noteId) ?: run {
                 // 记录不存在（被删了？）——明确置错误状态，
                 // 不要静默停在空白页，用户会以为编辑器坏了
                 _state.value = _state.value.copy(

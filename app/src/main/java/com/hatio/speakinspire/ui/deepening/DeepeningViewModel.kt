@@ -75,7 +75,7 @@ class DeepeningViewModel @Inject constructor(
      */
     fun load(noteId: String) {
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
+            val idea = repo.findNote(noteId) ?: return@launch
             val deepening = idea.deepening
             var rounds = deepening?.rounds ?: emptyList()
 

@@ -68,15 +68,15 @@ class EditNoteTest {
 
     @Test
     fun `编辑后详情页能读到新内容`() = runBlocking {
-        // 端到端：改完再用 findIdea 读一次，
+        // 端到端：改完再用 findNote 读一次，
         // 确认详情页显示的是新内容而不是缓存。
         noteDao.seed(listOf(seedNote("n1", "旧标题", "旧正文")))
 
         repo.updateNote("n1", "新标题", "新正文")
-        val idea = repo.findIdea("n1")
+        val view = repo.findNote("n1")
 
-        assertEquals("新标题", idea!!.note.title)
-        assertEquals("新正文", idea.note.body)
+        assertEquals("新标题", view!!.note.title)
+        assertEquals("新正文", view.note.body)
     }
 
     private fun seedNote(

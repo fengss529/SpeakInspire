@@ -45,7 +45,7 @@ class SproutViewModel @Inject constructor(
 
     fun load(noteId: String) {
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
+            val idea = repo.findNote(noteId) ?: return@launch
             answers = idea.deepening?.rounds
                 ?.filter { it.answered }
                 ?.mapNotNull { it.answer?.takeIf { a -> a.isNotBlank() } }

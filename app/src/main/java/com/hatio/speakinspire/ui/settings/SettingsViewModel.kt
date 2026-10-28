@@ -245,21 +245,22 @@ class SettingsViewModel @Inject constructor(
         if (_state.value.exporting) return
         _state.value = _state.value.copy(exporting = true, exportMessage = null)
         viewModelScope.launch {
-            val views = ideaRepo.exportSnapshot()
-            if (views.isEmpty()) {
+            val library = ideaRepo.exportSnapshot()
+            if (library.isEmpty) {
                 _state.value = _state.value.copy(
                     exporting = false,
                     exportMessage = "还没有记录可以导出。",
                 )
                 return@launch
             }
-            val md = MarkdownExporter.all(views)
+            val md = MarkdownExporter.all(library)
             val name = MarkdownExporter.fileName("随手记-全部")
             val ok = MarkdownShare.share(context, name, md)
             _state.value = _state.value.copy(
                 exporting = false,
                 exportMessage = if (ok) {
-                    "已生成 ${views.size} 条记录的 Markdown，选一个 App 存下来。"
+                    "已生成 ${library.notes.size} 条记录、${library.articles.size} 篇文章、" +
+                        "${library.topics.size} 个选题的 Markdown，选一个 App 存下来。"
                 } else {
                     "没能生成导出文件，再试一次。"
                 },

@@ -66,7 +66,10 @@ class ComposeViewModel @Inject constructor(
      */
     fun load(noteId: String, autoCompose: Boolean = false) {
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
+            val note = repo.findNote(noteId) ?: return@launch
+            // 文章和记录是两条独立资源，所以要分两次读。
+            // 多一次查询换来的是：文章没了，记录仍然打得开。
+            val article = repo.findArticleOfNote(noteId)?.article
             _state.value = ComposeUiState(
                 noteId = noteId,
                 // 文章 id 必须跟库里的一致。
@@ -78,15 +81,41 @@ class ComposeViewModel @Inject constructor(
                 //
                 // 没有文章时用 a_noteId 这个确定性的 id，
                 // 重复保存就是 upsert，不会产生副本。
-                articleId = idea.article?.id ?: "a_$noteId",
-                title = idea.article?.title ?: "",
-                paragraphs = idea.article?.paragraphs ?: emptyList(),
-                alreadyComposed = idea.article != null,
-                sourceMode = idea.article?.edited == true,
-                originalNote = idea.note.body,
+                articleId = article?.id ?: "a_$noteId",
+                title = article?.title ?: "",
+                paragraphs = article?.paragraphs ?: emptyList(),
+                alreadyComposed = article != null,
+                sourceMode = article?.edited == true,
+                originalNote = note.note.body,
             )
             // 已有文章就不重复生成——那是用户的资产，不该被覆盖
-            if (autoCompose && idea.article == null) compose()
+            if (autoCompose && article == null) compose()
+        }
+    }
+
+    /**
+     * 直接按文章 id 打开。从「思考」tab 进来走这条。
+     *
+     * 文章独立之后它可能没有任何来源记录（记录被删了），
+     * 所以不能靠 noteId 反查——那样这类文章就永远打不开了。
+     */
+    fun loadArticle(articleId: String) {
+        viewModelScope.launch {
+            val view = repo.findArticle(articleId) ?: return@launch
+            _state.value = ComposeUiState(
+                // 出处记录**已经不在了**就把 noteId 留空，界面据此关掉「回去再聊」。
+                //
+                // 不能直接写 `sourceNoteId.orEmpty()`：那是普通列，记录被删之后
+                // 它还是非空的，于是按钮亮着，点进去是一条空白的追问页。
+                noteId = if (view.hasSource) view.article.sourceNoteId.orEmpty() else "",
+                articleId = view.article.id,
+                title = view.article.title,
+                paragraphs = view.article.paragraphs,
+                alreadyComposed = true,
+                sourceMode = true,
+                // 原文快照：来源记录删了，这里仍然能回答「这段话从哪儿来」
+                originalNote = view.article.sourceText,
+            )
         }
     }
 
@@ -104,15 +133,15 @@ class ComposeViewModel @Inject constructor(
         _state.value = current.copy(loading = true, errorMessage = null)
 
         viewModelScope.launch {
-            val idea = repo.findIdea(current.noteId) ?: return@launch
-            val rounds = idea.deepening?.rounds ?: emptyList()
+            val note = repo.findNote(current.noteId) ?: return@launch
+            val rounds = note.deepening?.rounds ?: emptyList()
 
             val ctx = DeepeningContext(
                 noteId = current.noteId,
-                originalNote = idea.note.body,
+                originalNote = note.note.body,
                 rounds = rounds.toChatMessages(),
                 roundIndex = rounds.count { it.answered },
-                maxRounds = idea.deepening?.estimatedRounds ?: 5,
+                maxRounds = note.deepening?.estimatedRounds ?: 5,
             )
 
             try {
@@ -205,12 +234,14 @@ class ComposeViewModel @Inject constructor(
      * 走导出会拿到空内容，用户会以为导出坏了。
      */
     fun exportMarkdown() {
-        val noteId = _state.value.noteId
-        if (noteId.isBlank()) return
+        val current = _state.value
+        if (current.articleId.isBlank()) return
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
-            val md = MarkdownExporter.note(idea)
-            val name = MarkdownExporter.fileName(idea.article?.title ?: idea.note.title)
+            // 导出一篇文章要连它的选题一起带走，所以读一次全库。
+            // 数据量在千条以内，这点开销比多维护一条只读文章与选题的查询路径便宜。
+            val library = repo.exportSnapshot()
+            val md = MarkdownExporter.article(library, current.articleId)
+            val name = MarkdownExporter.fileName(current.title.ifBlank { "文章" })
             val ok = MarkdownShare.share(context, name, md)
             if (!ok) {
                 _state.value = _state.value.copy(errorMessage = "没能生成导出文件，再试一次。")

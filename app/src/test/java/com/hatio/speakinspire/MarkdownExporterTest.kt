@@ -12,7 +12,10 @@ import com.hatio.speakinspire.data.model.Script
 import com.hatio.speakinspire.data.model.Section
 import com.hatio.speakinspire.data.model.Sprout
 import com.hatio.speakinspire.data.model.SproutSection
-import com.hatio.speakinspire.domain.IdeaView
+import com.hatio.speakinspire.domain.ArticleView
+import com.hatio.speakinspire.domain.Library
+import com.hatio.speakinspire.domain.NoteView
+import com.hatio.speakinspire.domain.TopicView
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,7 +36,8 @@ class MarkdownExporterTest {
 
     private val t = 1_700_000_000_000L
 
-    private fun fullView() = IdeaView(
+    private fun fullLibrary() = Library(
+        notes = listOf(NoteView(
         note = Note(
             id = "n1",
             title = "上台为什么紧张",
@@ -52,18 +56,38 @@ class MarkdownExporterTest {
             startedAt = t,
             finishedAt = t + 1000,
         ),
-        article = Article(
-            id = "a_n1",
-            sourceNoteId = "n1",
-            sourceText = "我提前背了稿子，上台全忘了",
-            title = "忘词的那三秒",
-            paragraphs = listOf(
-                Paragraph("我提前背了稿子。", mine = true),
-                Paragraph("熟练度错觉让人误以为自己准备好了。", mine = false),
-            ),
-            writtenAt = t + 2000,
+        articleId = "a_n1",
+        sprouts = listOf(
+            Sprout(
+                id = "sp1",
+                noteId = "n1",
+                title = "背下来的东西不算会",
+                sections = listOf(
+                    SproutSection(
+                        seed = "我提前背了稿子，上台全忘了。",
+                        insight = "把话写死之后，大脑会把它当成已经完成的事。",
+                        source = "",
+                    )
+                ),
+                createdAt = t + 5000,
+            )
         ),
-        scripts = listOf(
+    )),
+        articles = listOf(ArticleView(
+            article = Article(
+                id = "a_n1",
+                sourceNoteId = "n1",
+                sourceText = "我提前背了稿子，上台全忘了",
+                title = "忘词的那三秒",
+                paragraphs = listOf(
+                    Paragraph("我提前背了稿子。", mine = true),
+                    Paragraph("熟练度错觉让人误以为自己准备好了。", mine = false),
+                ),
+                writtenAt = t + 2000,
+            ),
+            topicCount = 1,
+        )),
+        topics = listOf(TopicView(
             Script(
                 id = "s1",
                 sourceArticleId = "a_n1",
@@ -80,27 +104,12 @@ class MarkdownExporterTest {
                 createdAt = t + 3000,
                 shotAt = t + 4000,
             )
-        ),
-        sprouts = listOf(
-            Sprout(
-                id = "sp1",
-                noteId = "n1",
-                title = "背下来的东西不算会",
-                sections = listOf(
-                    SproutSection(
-                        seed = "我提前背了稿子，上台全忘了。",
-                        insight = "把话写死之后，大脑会把它当成已经完成的事。",
-                        source = "",
-                    )
-                ),
-                createdAt = t + 5000,
-            )
-        ),
+        )),
     )
 
     @Test
     fun `导出的内容包含这条记录的全部痕迹`() {
-        val md = MarkdownExporter.note(fullView())
+        val md = MarkdownExporter.note(fullLibrary(), "n1")
 
         assertTrue("原始记录", md.contains("# 上台为什么紧张"))
         assertTrue("正文", md.contains("我提前背了稿子，上台全忘了。"))
@@ -126,7 +135,7 @@ class MarkdownExporterTest {
 
     @Test
     fun `未回答的轮次不导出`() {
-        val md = MarkdownExporter.note(fullView())
+        val md = MarkdownExporter.note(fullLibrary(), "n1")
         assertFalse(
             "只问没答的那一轮，答案区不该凭空多出一段空白章节",
             md.contains("是一回事吗"),
@@ -135,7 +144,7 @@ class MarkdownExporterTest {
 
     @Test
     fun `AI 补充的段落会被标注出来`() {
-        val md = MarkdownExporter.note(fullView())
+        val md = MarkdownExporter.note(fullLibrary(), "n1")
         assertTrue(
             "用户要判断哪句是自己想的，这条信息不能丢",
             md.contains("来源标注") && md.contains("第 2 段"),
@@ -147,7 +156,7 @@ class MarkdownExporterTest {
 
     @Test
     fun `没有出处的发芽不硬凑出处行`() {
-        val md = MarkdownExporter.note(fullView())
+        val md = MarkdownExporter.note(fullLibrary(), "n1")
         // 这一节的 source 是空的，导出里不该出现孤零零的破折号
         assertFalse(
             "没有出处就别画「——」那一行",
@@ -157,19 +166,21 @@ class MarkdownExporterTest {
 
     @Test
     fun `空记录也能导出，不崩`() {
-        val bare = IdeaView(
-            note = Note(
-                id = "n2",
-                title = "",
-                body = "",
-                createdAt = t,
-                source = NoteSource.QUICK,
-            ),
-            deepening = null,
-            article = null,
-            scripts = emptyList(),
+        val bare = Library(
+            notes = listOf(
+                NoteView(
+                    note = Note(
+                        id = "n2",
+                        title = "",
+                        body = "",
+                        createdAt = t,
+                        source = NoteSource.QUICK,
+                    ),
+                    deepening = null,
+                )
+            )
         )
-        val md = MarkdownExporter.note(bare)
+        val md = MarkdownExporter.note(bare, "n2")
         assertTrue("无标题也要有个占位", md.contains("# （无标题）"))
         assertFalse(md.contains("## 追问"))
         assertFalse(md.contains("## 文章"))
@@ -177,9 +188,10 @@ class MarkdownExporterTest {
 
     @Test
     fun `导出全部会把多条记录排在同一个文档里`() {
-        val md = MarkdownExporter.all(listOf(fullView(), fullView()))
+        val md = MarkdownExporter.all(fullLibrary())
         assertTrue(md.contains("全部分享"))
-        assertTrue("两条记录各有一个一级标题", md.split("# 上台为什么紧张").size == 3)
+        assertTrue("记录有一个一级标题", md.split("# 上台为什么紧张").size == 2)
+        assertTrue("文章也在同一份文档里", md.contains("## 文章：忘词的那三秒"))
     }
 
     @Test

@@ -38,7 +38,6 @@ class TopicUiStateTest {
         shotAt: Long? = null,
         step: TopicStep = TopicStep.ANGLES,
     ) = TopicUiState(
-        noteId = "n1",
         articleTitle = "文章标题",
         step = step,
         angles = angles,

@@ -11,6 +11,7 @@ import com.hatio.speakinspire.data.model.ScriptOutline
 import com.hatio.speakinspire.data.model.Section
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.domain.TopicState
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.ErrorKind
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -46,36 +47,60 @@ class TopicViewModel @Inject constructor(
     private val _state = MutableStateFlow(TopicUiState())
     val state: StateFlow<TopicUiState> = _state.asStateFlow()
 
-    fun load(noteId: String) {
+    /**
+     * 从**文章**进入。选题挂在文章上，不挂在记录上。
+     *
+     * 文章独立之后，它可能压根没有来源记录（记录被删了），
+     * 所以这页的入口参数必须是 articleId——拿 noteId 进来会找不到东西。
+     */
+    fun load(articleId: String) {
         viewModelScope.launch {
-            val idea = repo.findIdea(noteId) ?: return@launch
-            val existing = idea.scripts.firstOrNull { !it.parked }
+            val article = repo.findArticle(articleId)
+            val existing = article
+                ?.let { a -> repo.topicsOfArticle(a.article.id).firstOrNull { !it.script.parked } }
+
             _state.value = TopicUiState(
-                noteId = noteId,
-                // 选题必须挂在**真实存在的**文章 id 上。
-                // 之前这里是 articleId = "a_$noteId"，
-                // 而文章的 id 是随机 UUID——外键对不上，
-                // 要么插入时违反约束崩掉，要么选题挂到不存在的文章上，
-                // 结果就是「存了选题但选题 tab 里没有」。
-                articleId = idea.article?.id ?: "",
-                articleTitle = idea.article?.title ?: idea.note.title,
-                articleParagraphs = idea.article?.paragraphs?.map { it.text } ?: emptyList(),
-                existingScript = existing,
-                shotAt = existing?.shotAt,
+                articleId = articleId,
+                articleTitle = article?.article?.title.orEmpty(),
+                articleParagraphs = article?.article?.paragraphs?.map { it.text } ?: emptyList(),
+                existingScript = existing?.script,
+                shotAt = existing?.script?.shotAt,
+                parked = existing?.state == TopicState.PARKED,
             )
+
             // 还没有选题就去拆角度
-            if (existing == null && idea.article != null) {
-                deriveAngles(idea.article.title, idea.article.paragraphs.map { it.text })
+            if (existing == null && article != null) {
+                deriveAngles(article.article.title, article.article.paragraphs.map { it.text })
             }
+        }
+    }
+
+    /**
+     * 按选题自己的 id 打开。从「选题」tab 点卡片进来走这条。
+     *
+     * 这条路径**不依赖文章还在**：选题带了自己的标题快照和分镜，
+     * 文章被删了也照样能看、能改备注、能标已拍。
+     */
+    fun loadTopic(scriptId: String) {
+        viewModelScope.launch {
+            val topic = repo.findTopic(scriptId) ?: return@launch
+            val article = topic.script.sourceArticleId?.let { repo.findArticle(it) }
+            _state.value = TopicUiState(
+                articleId = topic.script.sourceArticleId.orEmpty(),
+                articleTitle = topic.title,
+                articleParagraphs = article?.article?.paragraphs?.map { it.text } ?: emptyList(),
+                existingScript = topic.script,
+                shotAt = topic.script.shotAt,
+                parked = topic.state == TopicState.PARKED,
+            )
         }
     }
 
     /** 「再试一次」：重新读文章正文再拆角度，不能只拿标题去拆 */
     fun rederive() {
         viewModelScope.launch {
-            val idea = repo.findIdea(_state.value.noteId) ?: return@launch
-            val article = idea.article ?: return@launch
-            deriveAngles(article.title, article.paragraphs.map { it.text })
+            val article = repo.findArticle(_state.value.articleId) ?: return@launch
+            deriveAngles(article.article.title, article.article.paragraphs.map { it.text })
         }
     }
 
@@ -212,7 +237,6 @@ class TopicViewModel @Inject constructor(
 enum class TopicStep { ANGLES, OUTLINE }
 
 data class TopicUiState(
-    val noteId: String = "",
     /** 选题所属文章的真实 id。空表示这篇文章还没写成 */
     val articleId: String = "",
     val articleTitle: String = "",

@@ -75,6 +75,10 @@ interface NoteDao {
     @Query("SELECT EXISTS(SELECT 1 FROM note WHERE id = :id)")
     suspend fun exists(id: String): Boolean
 
+    /** 有没有从这条记录派生出新记录。用于派生 [com.hatio.speakinspire.domain.NoteState.DERIVED] */
+    @Query("SELECT EXISTS(SELECT 1 FROM note WHERE parentId = :id)")
+    suspend fun hasChild(id: String): Boolean
+
     @Query("DELETE FROM note WHERE id = :id")
     suspend fun hardDelete(id: String)
 }
@@ -113,17 +117,52 @@ interface ArticleDao {
     @Upsert
     suspend fun upsert(entity: ArticleEntity)
 
-    @Query("SELECT * FROM article WHERE sourceNoteId = :noteId LIMIT 1")
+    @Query(
+        """
+        SELECT * FROM article
+        WHERE sourceNoteId = :noteId
+          AND id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'article')
+        LIMIT 1
+        """
+    )
     suspend fun findByNote(noteId: String): ArticleEntity?
 
-    @Query("SELECT * FROM article ORDER BY writtenAt DESC")
-    fun observeAll(): Flow<List<ArticleEntity>>
+    /**
+     * 三张表各自要从列表里排掉回收站里的那些。
+     *
+     * 这里用 `NOT IN (SELECT ...)` 而不是 JOIN：回收站表最多几十行，
+     * 而主表可能上千行，让 SQLite 走这套子查询比 join 再 group 便宜。
+     */
+    @Query(
+        """
+        SELECT * FROM article
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'article')
+        ORDER BY writtenAt DESC
+        """
+    )
+    fun observeActive(): Flow<List<ArticleEntity>>
+
+    @Query(
+        """
+        SELECT * FROM article
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'article')
+        ORDER BY writtenAt DESC
+        """
+    )
+    suspend fun findAllActive(): List<ArticleEntity>
+
+    @Query("SELECT * FROM article WHERE id = :id")
+    suspend fun findById(id: String): ArticleEntity?
 
     @Query("SELECT * FROM article ORDER BY writtenAt DESC")
     suspend fun findAll(): List<ArticleEntity>
 
     @Query("UPDATE article SET paragraphsJson = :json, edited = 1 WHERE id = :id")
     suspend fun updateContent(id: String, json: String)
+
+    /** 改标题——文章独立之后，「思考」tab 要能编辑自己的标题 */
+    @Query("UPDATE article SET title = :title WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String)
 
     @Query("DELETE FROM article WHERE id = :id")
     suspend fun delete(id: String)
@@ -135,11 +174,36 @@ interface ScriptDao {
     @Upsert
     suspend fun upsert(entity: ScriptEntity)
 
-    @Query("SELECT * FROM script WHERE sourceArticleId = :articleId ORDER BY createdAt DESC")
+    @Query(
+        """
+        SELECT * FROM script
+        WHERE sourceArticleId = :articleId
+          AND id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'script')
+        ORDER BY createdAt DESC
+        """
+    )
     suspend fun findByArticle(articleId: String): List<ScriptEntity>
 
-    @Query("SELECT * FROM script ORDER BY createdAt DESC")
-    fun observeAll(): Flow<List<ScriptEntity>>
+    @Query(
+        """
+        SELECT * FROM script
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'script')
+        ORDER BY createdAt DESC
+        """
+    )
+    fun observeActive(): Flow<List<ScriptEntity>>
+
+    @Query(
+        """
+        SELECT * FROM script
+        WHERE id NOT IN (SELECT resourceId FROM trashed WHERE resourceType = 'script')
+        ORDER BY createdAt DESC
+        """
+    )
+    suspend fun findAllActive(): List<ScriptEntity>
+
+    @Query("SELECT * FROM script WHERE id = :id")
+    suspend fun findById(id: String): ScriptEntity?
 
     @Query("SELECT * FROM script ORDER BY createdAt DESC")
     suspend fun findAll(): List<ScriptEntity>

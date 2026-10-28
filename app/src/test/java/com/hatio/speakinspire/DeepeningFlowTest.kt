@@ -464,7 +464,8 @@ class DeepeningFlowTest {
         )
 
         val vm = TopicViewModel(repo, ai)
-        vm.load("n1")
+        // 转选题现在按**文章** id 加载——选题挂在文章上，不是挂在记录上
+        vm.load("a_n1")
         assertEquals("应该拆出角度", 1, vm.state.value.angles.size)
 
         vm.chooseAngle(vm.state.value.angles.first())

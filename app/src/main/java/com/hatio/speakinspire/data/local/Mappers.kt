@@ -113,33 +113,43 @@ fun Sprout.toEntity(): SproutEntity = SproutEntity(
     createdAt = createdAt,
 )
 
-/** 注意这个函数：note 表没有 status，状态是算出来的 */
-fun EntityBundle.toIdeaView(note: Note): com.hatio.speakinspire.domain.IdeaView =
-    com.hatio.speakinspire.domain.IdeaView(
-        note = note,
+/**
+ * 记录视图。**注意 note 表没有 status**，状态是算出来的。
+ *
+ * [articleId] 是可空的——文章是独立资源，可能还没生成，
+ * 也可能已经被单独删掉了。这里不做存在性校验，
+ * 因为「记录知道我生成过文章」和「文章还在不在」是两件事。
+ */
+fun NoteEntity.toView(
+    deepening: DeepeningEntity?,
+    sprouts: List<SproutEntity>,
+    articleId: String?,
+    hasChild: Boolean,
+): com.hatio.speakinspire.domain.NoteView =
+    com.hatio.speakinspire.domain.NoteView(
+        note = toModel(),
         deepening = deepening?.toModel(),
-        article = article?.toModel(),
-        scripts = scripts.map { it.toModel() },
         sprouts = sprouts.map { it.toModel() },
+        articleId = articleId,
+        hasChild = hasChild,
     )
 
 /**
- * 以 note 为主语组装——更符合调用直觉：
- * 「这条 note 对应的 idea view 是什么」。
- */
-fun Note.toIdeaView(bundle: EntityBundle): com.hatio.speakinspire.domain.IdeaView =
-    bundle.toIdeaView(this)
-
-/**
- * 各表查出来的一次性聚合。
+ * 文章视图。
  *
- * UI 只读这个聚合，不分别查各个表——避免多次查询之间状态不一致
- * （比如正好在两次查询之间右滑了）。
+ * [sourceNoteExists] 必须由调用方查过 note 表后传入——
+ * 不能用 `article.sourceNoteId != null` 代替。那个字段是普通列，
+ * 记录被删之后它还是非空的，会让界面永远显示「出处还在」。
  */
-data class EntityBundle(
-    val deepening: DeepeningEntity?,
-    val article: ArticleEntity?,
-    val scripts: List<ScriptEntity>,
-    /** 发芽报告。默认空，让只关心前四张表的测试不必每次都构造它 */
-    val sprouts: List<SproutEntity> = emptyList(),
-)
+fun ArticleEntity.toView(
+    topicCount: Int,
+    sourceNoteExists: Boolean = false,
+): com.hatio.speakinspire.domain.ArticleView =
+    com.hatio.speakinspire.domain.ArticleView(
+        article = toModel(),
+        topicCount = topicCount,
+        sourceNoteExists = sourceNoteExists,
+    )
+
+fun ScriptEntity.toView(): com.hatio.speakinspire.domain.TopicView =
+    com.hatio.speakinspire.domain.TopicView(script = toModel())

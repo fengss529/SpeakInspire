@@ -90,6 +90,8 @@ fun SettingsScreen(
     onSavedConsumed: () -> Unit = {},
     /** 导出全部记录为 Markdown */
     onExportAll: () -> Unit = {},
+    /** 打开回收站 */
+    onOpenTrash: () -> Unit = {},
     onExportMessageConsumed: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -386,6 +388,18 @@ fun SettingsScreen(
             Spacer(Modifier.height(Spacing.xs))
             Text(
                 text = "每条记录的追问、文章、发芽报告和选题骨架都会一起导出来，不是摘要。",
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+
+            Spacer(Modifier.height(Spacing.m))
+            OutlinedButton(onClick = onOpenTrash, modifier = Modifier.fillMaxWidth()) {
+                Text("回收站")
+            }
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "删掉的记录、文章、选题都在这里，30 天内可以恢复。",
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.outline,
