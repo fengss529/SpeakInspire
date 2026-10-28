@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Paragraph
 import com.hatio.speakinspire.ui.compose.ComposeUiState
 import com.hatio.speakinspire.ui.compose.RejectedInfo
+import com.hatio.speakinspire.ui.text.SelectableText
 import com.hatio.speakinspire.ui.theme.Spacing
 import com.hatio.speakinspire.ui.theme.StatusColors
 
@@ -265,11 +266,15 @@ private fun MarkedParagraph(para: Paragraph, showSource: Boolean) {
                 )
                 Spacer(Modifier.height(3.dp))
             }
-            Text(
+            // 文章是要拿出去用的：选一段复制去改、去发，
+            // 是这个页面最自然的动作
+            SelectableText(
                 text = para.text,
-                fontSize = 15.sp,
-                lineHeight = 26.sp,
-                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = 15.sp,
+                    lineHeight = 26.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
             )
         }
     }

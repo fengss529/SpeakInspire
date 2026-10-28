@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Round
+import com.hatio.speakinspire.ui.text.SelectableText
 import com.hatio.speakinspire.ui.theme.Spacing
 
 /**
@@ -159,11 +160,15 @@ fun NoteDetailScreen(
                 Spacer(Modifier.height(Spacing.l))
 
                 if (body.isNotBlank()) {
-                    Text(
+                    // 详情页是「读」的地方：长按能选中复制就够了。
+                    // 「捡一句去用」在追问页正文上——那里才有输入框接着
+                    SelectableText(
                         text = body,
-                        fontSize = 15.sp,
-                        lineHeight = 26.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 15.sp,
+                            lineHeight = 26.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
 

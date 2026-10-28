@@ -65,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.ui.deepening.DeepeningUiState
+import com.hatio.speakinspire.ui.text.PickableText
+import com.hatio.speakinspire.ui.text.SelectableText
 import com.hatio.speakinspire.ui.theme.Spacing
 
 /**
@@ -262,7 +264,17 @@ fun DeepeningScreen(
                 // 原始笔记置顶，只展示一次
                 if (state.noteBody.isNotBlank()) {
                     item("origin") {
-                        OriginCard(body = state.noteBody, onEdit = onEditOrigin)
+                        OriginCard(
+                            body = state.noteBody,
+                            onEdit = onEditOrigin,
+                            // 「捡起一句」的去处：收进当前回答。
+                            // 追问阶段用户常常「想说的说不出」，
+                            // 而他自己的原话就在上面摆着——
+                            // 让他把其中一句拣回来当起点，比让他从空白框开始容易得多
+                            onPickSentence = { picked ->
+                                input = if (input.isBlank()) picked else "$input $picked"
+                            },
+                        )
                     }
                 }
 
@@ -498,7 +510,12 @@ private fun AnswerEditDialog(
  * 不该逼用户退出去找详情页——他这时候正好知道该改哪里。
  */
 @Composable
-private fun OriginCard(body: String, onEdit: () -> Unit = {}) {
+private fun OriginCard(
+    body: String,
+    onEdit: () -> Unit = {},
+    /** 选中一句之后交出去。为 null 时只给原生复制 */
+    onPickSentence: ((String) -> Unit)? = null,
+) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -527,12 +544,23 @@ private fun OriginCard(body: String, onEdit: () -> Unit = {}) {
             )
         }
         Spacer(Modifier.height(4.dp))
-        Text(
-            text = body,
+        // 这段文字有两个用途：看清自己写了什么，以及把其中一句捡回来。
+        // 后者需要拿到选中的内容，所以走只读输入框那套
+        val style = MaterialTheme.typography.bodyMedium.copy(
             fontSize = 13.sp,
             lineHeight = 20.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (onPickSentence != null) {
+            PickableText(
+                text = body,
+                style = style,
+                onPick = onPickSentence,
+                pickLabel = "收进回答",
+            )
+        } else {
+            SelectableText(text = body, style = style)
+        }
     }
 }
 
@@ -589,11 +617,16 @@ private fun HistoryTurn(
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                     .padding(horizontal = 12.dp, vertical = 9.dp),
             ) {
-                Text(
+                // 问题也能选中复制——用户可能想把这个问题记下来问别人。
+                // 但不给「收进回答」：把 AI 的问题抄进自己的回答里，
+                // 等于把自己要说的话换成别人（哪怕是 AI）的措辞
+                SelectableText(
                     text = question,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                 )
             }
         }
@@ -620,11 +653,13 @@ private fun HistoryTurn(
                     .padding(horizontal = 12.dp, vertical = 9.dp),
             ) {
                 Column {
-                    Text(
+                    SelectableText(
                         text = answer,
-                        fontSize = 13.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
                         // 有人一句话能说几百字。历史里留 8 行足够辨认，
                         // 再多就把页面顶到很远——要回看原文可以去成文页
                         maxLines = 8,
