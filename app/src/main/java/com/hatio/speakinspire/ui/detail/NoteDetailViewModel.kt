@@ -62,22 +62,26 @@ class NoteDetailViewModel @Inject constructor(
     }
 
     /**
-     * 导出这一条（连同追问、文章、发芽、选题）为 Markdown。
+     * 把这一条发出去（连同追问、文章、发芽、选题）→ 系统分享面板。
      *
-     * 失败时把话说明白：用户点了一下什么都没有，会以为按钮坏了。
+     * 和设置页的「导出全部」分工明确：那边是留一份备份到自己手里，
+     * 这边是一次性把某一条交给别人。所以这边走分享面板，
+     * 那边写进 `下载/随手记/`。
+     *
+     * 失败时把话说明白：用户点了一下什么都没有，会以为图标坏了。
      */
-    fun exportMarkdown() {
+    fun shareNote() {
         val current = _state.value
         if (current.noteId.isBlank()) return
         viewModelScope.launch {
-            // 单条导出也要读出它派生出去的文章与选题，
-            // 所以仍然走全库快照——少维护一条「只导一条」的查询路径
+            // 单条分享也要读出它派生出去的文章与选题，
+            // 所以仍然走全库快照——少维护一条「只取一条」的查询路径
             val library = repo.exportSnapshot()
             val md = MarkdownExporter.note(library, current.noteId)
             val name = MarkdownExporter.fileName(current.title.ifBlank { "随手记" })
             val ok = MarkdownShare.share(context, name, md)
             _state.value = _state.value.copy(
-                exportMessage = if (ok) null else "没能生成导出文件，再试一次。",
+                exportMessage = if (ok) null else "没能生成分享文件，再试一次。",
             )
         }
     }

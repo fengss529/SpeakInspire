@@ -1,5 +1,9 @@
 package com.hatio.speakinspire.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -20,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -39,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,8 +61,10 @@ import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.ui.settings.SettingsUiState
+import com.hatio.speakinspire.ui.settings.SettingsViewModel
 import com.hatio.speakinspire.ui.settings.TestResult
 import com.hatio.speakinspire.ui.theme.Spacing
+import kotlinx.coroutines.launch
 
 /**
  * 设置页。
@@ -88,13 +96,29 @@ fun SettingsScreen(
     onSave: () -> Unit,
     /** 提示弹完后回调，把 saved 标志清掉 */
     onSavedConsumed: () -> Unit = {},
-    /** 导出全部记录为 Markdown */
+    /** 导出全部内容到 下载/随手记/ */
     onExportAll: () -> Unit = {},
     /** 打开回收站 */
     onOpenTrash: () -> Unit = {},
     onExportMessageConsumed: () -> Unit = {},
+    onExportDoneConsumed: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    // Android 9 及以下往公共目录写文件要权限。权限批下来就接着导——
+    // 不重导的话用户点完「允许」什么也不会发生，只能再点一次按钮
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            onExportAll()
+        } else {
+            scope.launch {
+                snackbar.showSnackbar("没有存储权限，文件写不到下载目录")
+            }
+        }
+    }
 
     // 保存成功后**留在设置页**，只提示一下。
     //
@@ -115,10 +139,32 @@ fun SettingsScreen(
         state.saveError?.let { snackbar.showSnackbar(it) }
     }
     LaunchedEffect(state.exportMessage) {
-        state.exportMessage?.let {
-            snackbar.showSnackbar(it)
-            onExportMessageConsumed()
+        val msg = state.exportMessage ?: return@LaunchedEffect
+        onExportMessageConsumed()
+        // 需要存储权限时不是"提示"而是"去申请"。
+        // 标记比对放在文案之外，改文案不会让这条路径失效
+        if (msg == SettingsViewModel.EXPORT_NEED_PERMISSION) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            } else {
+                snackbar.showSnackbar("导出没能完成，再试一次。")
+            }
+        } else {
+            snackbar.showSnackbar(msg)
         }
+    }
+
+    // 导出成功用对话框：里面有个路径，提示条一行就滚过去了，
+    // 用户回头找不到文件
+    state.exportDone?.let { done ->
+        AlertDialog(
+            onDismissRequest = onExportDoneConsumed,
+            title = { Text("导出完成") },
+            text = { Text(done, fontSize = 13.sp, lineHeight = 20.sp) },
+            confirmButton = {
+                TextButton(onClick = onExportDoneConsumed) { Text("知道了") }
+            },
+        )
     }
 
     Scaffold(
@@ -372,7 +418,8 @@ fun SettingsScreen(
             Spacer(Modifier.height(Spacing.s))
             Text(
                 text = "所有记录只存在这台手机上，不上传任何服务器。" +
-                    "导出的是纯文本 Markdown——任何编辑器都打得开，十年后也还在。",
+                    "导出会往「下载/随手记」里放两个文件：data.json 是完整备份，" +
+                    "md 是纯文本——任何编辑器都打得开，十年后也还在。",
                 fontSize = 11.sp,
                 lineHeight = 18.sp,
                 color = MaterialTheme.colorScheme.outline,
@@ -383,7 +430,7 @@ fun SettingsScreen(
                 enabled = !state.exporting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.exporting) "正在整理…" else "导出全部为 Markdown")
+                Text(if (state.exporting) "正在整理…" else "导出全部到「下载/随手记」")
             }
             Spacer(Modifier.height(Spacing.xs))
             Text(

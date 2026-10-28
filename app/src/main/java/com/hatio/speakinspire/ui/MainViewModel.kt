@@ -2,6 +2,7 @@ package com.hatio.speakinspire.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.data.local.SpeakInspireDatabase
 import com.hatio.speakinspire.data.local.TrashType
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.domain.ArticleView
@@ -41,6 +42,16 @@ class MainViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = MainUiState(),
         )
+
+    init {
+        // 回收站写着「30 天内可以恢复」，那就得真的在 30 天后清掉。
+        // 这个函数早就写好了，但**一处都没调用过**——
+        // 界面在许一个没人兑现的承诺。放在这里是因为它是全 App 唯一的入口，
+        // 冷启动时跑一次就够，不需要定时任务
+        viewModelScope.launch {
+            repo.purgeExpiredTrash(SpeakInspireDatabase.TRASH_RETENTION_MS)
+        }
+    }
 
     /**
      * 新建一条记录。

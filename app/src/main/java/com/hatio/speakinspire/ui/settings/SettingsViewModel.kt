@@ -2,8 +2,10 @@ package com.hatio.speakinspire.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hatio.speakinspire.BuildConfig
+import com.hatio.speakinspire.data.export.DownloadStore
+import com.hatio.speakinspire.data.export.LibraryJson
 import com.hatio.speakinspire.data.export.MarkdownExporter
-import com.hatio.speakinspire.data.export.MarkdownShare
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
@@ -232,14 +234,27 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 导出全部记录为一个 Markdown 文件。
+     * 导出全部内容到 `下载/随手记/`。
      *
-     * ## 为什么这件事必须做
+     * ## 为什么一次给两个文件
      *
-     * 用户把想法记在这里，最底层的担心是「哪天这个 App 不做了，
-     * 我说过的话就没了」。导出的存在，是这份担心的解药——
-     * 所以导出必须是**完整**的：追问、文章、发芽、选题一个不少。
-     * 少一样，他下次还得回来找，那这次导出就没意义。
+     * **md 是给人读的，json 是给程序读的。**
+     * 两者解决的是不同的担心：
+     *
+     * - md：十年后随便一个文本编辑器都能打开。用户最底层的担心是
+     *   「哪天这个 App 不做了，我说过的话就没了」——纯文本才真正解除它。
+     * - json：字段与库里的表一一对应，带 `schemaVersion`。
+     *   换手机、重装、将来做导入，靠它把内容原样搬回去。
+     *   md 丢了「这是第几轮问答」「这段是 AI 补的」这类结构，搬不动。
+     *
+     * 所以不要问用户「你要哪种」——他没法在导出那一刻判断。
+     * 一次都给，各管一头。
+     *
+     * ## 写到下载目录而不是拉分享面板
+     *
+     * 分享面板的语义是「发给别人」，可用户真正的需求是
+     * 「留一份在自己手里」。写进下载目录后，文件管理器一打开就看得见，
+     * 插上电脑也是一个普通文件夹。
      */
     fun exportAll() {
         if (_state.value.exporting) return
@@ -253,16 +268,37 @@ class SettingsViewModel @Inject constructor(
                 )
                 return@launch
             }
+
             val md = MarkdownExporter.all(library)
-            val name = MarkdownExporter.fileName("随手记-全部")
-            val ok = MarkdownShare.share(context, name, md)
+            val json = LibraryJson.encode(library, BuildConfig.VERSION_NAME)
+            val stem = MarkdownExporter.fileName("随手记-全部").removeSuffix(".md")
+
+            val result = DownloadStore.write(
+                context,
+                // json 放前面：它是完整备份，md 是顺手给人看的
+                listOf(
+                    LibraryJson.FILE_NAME to json,
+                    "$stem.md" to md,
+                ),
+            )
+
             _state.value = _state.value.copy(
                 exporting = false,
-                exportMessage = if (ok) {
-                    "已生成 ${library.notes.size} 条记录、${library.articles.size} 篇文章、" +
-                        "${library.topics.size} 个选题的 Markdown，选一个 App 存下来。"
-                } else {
-                    "没能生成导出文件，再试一次。"
+                exportMessage = when (result) {
+                    is DownloadStore.Result.Ok -> null
+                    // 只有 Android 9 及以下会走到这里。界面拿到这个标记后去申请权限，
+                    // 批下来再调一次 exportAll()
+                    DownloadStore.Result.NeedPermission -> EXPORT_NEED_PERMISSION
+                    is DownloadStore.Result.Failed -> "没能写入文件：${result.detail}"
+                },
+                // 成功用对话框而不是提示条：里面有个路径，
+                // 用户得能看清并记住它去哪儿了。提示条一行就滚过去了
+                exportDone = (result as? DownloadStore.Result.Ok)?.let {
+                    "已存到「${it.folder}」\n\n" +
+                        it.names.joinToString("\n") +
+                        "\n\n里面装的是 ${library.notes.size} 条记录、" +
+                        "${library.articles.size} 篇文章、${library.topics.size} 个选题。\n" +
+                        "data.json 是完整备份，md 是给你读的。"
                 },
             )
         }
@@ -270,6 +306,18 @@ class SettingsViewModel @Inject constructor(
 
     fun consumeExportMessage() {
         _state.value = _state.value.copy(exportMessage = null)
+    }
+
+    fun consumeExportDone() {
+        _state.value = _state.value.copy(exportDone = null)
+    }
+
+    companion object {
+        /**
+         * 「需要存储权限」不能靠中文字符串比对——那句话随时会改文案。
+         * 用这个标记当信号，界面据此弹权限申请。
+         */
+        const val EXPORT_NEED_PERMISSION = "__need_storage_permission__"
     }
 }
 
@@ -291,8 +339,10 @@ data class SettingsUiState(
     val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
     /** 正在导出全部 */
     val exporting: Boolean = false,
-    /** 导出结果提示。null = 没有要提示的 */
+    /** 失败/提示信息，用底部提示条显示。null = 没有要提示的 */
     val exportMessage: String? = null,
+    /** 导出成功后的完整回执（含路径），用对话框显示。null = 不显示 */
+    val exportDone: String? = null,
 ) {
     fun toConfig() = ProviderConfig(
         providerId = selectedProvider,

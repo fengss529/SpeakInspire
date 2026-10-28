@@ -249,6 +249,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onCancelAddModel = { svm.cancelAddModel() },
                 onExportAll = { svm.exportAll() },
                 onExportMessageConsumed = { svm.consumeExportMessage() },
+                onExportDoneConsumed = { svm.consumeExportDone() },
                 onOpenTrash = { route = Route.Trash },
             )
         }
@@ -288,7 +289,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     nstate.articleId?.let { route = Route.Article(it) }
                 },
                 onSettings = openSettings,
-                onExport = { nvm.exportMarkdown() },
+                onShare = { nvm.shareNote() },
                 onDismissMessage = { nvm.consumeExportMessage() },
             )
         }
@@ -355,7 +356,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     if (cstate.noteId.isNotBlank()) route = Route.Deepening(cstate.noteId)
                 },
                 onConvert = { route = Route.Convert(cstate.articleId) },
-                onExport = { cvm.exportMarkdown() },
+                onShare = { cvm.shareArticle() },
                 onSettings = openSettings,
             )
         }
@@ -384,7 +385,7 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onGoBackToDeepening = { route = Route.Deepening(cstate.noteId) },
                 // 转选题要按**文章** id 走：选题挂在文章上，不挂在记录上
                 onConvert = { route = Route.Convert(cstate.articleId) },
-                onExport = { cvm.exportMarkdown() },
+                onShare = { cvm.shareArticle() },
                 onSettings = openSettings,
             )
         }

@@ -127,8 +127,14 @@ internal object SimpleJson {
 
     // ---------- 转义 ----------
 
-    /** JSON 字符串字面量。必须转义引号、反斜杠、控制字符 */
-    private fun quote(s: String): String {
+    /**
+     * JSON 字符串字面量。必须转义引号、反斜杠、控制字符。
+     *
+     * 对外可见是为了 [com.hatio.speakinspire.data.export.LibraryJson]——
+     * 导出的 data.json 与库里存的是同一套转义规则。
+     * 两处各写一份的话，「他说"这样"」这种原话迟早会在其中一条路上坏掉。
+     */
+    internal fun quote(s: String): String {
         val sb = StringBuilder(s.length + 2)
         sb.append('"')
         for (ch in s) {

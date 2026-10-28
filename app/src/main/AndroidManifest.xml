@@ -5,6 +5,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+      导出到 下载/随手记/ 用。
+      Android 10（API 29）起走 MediaStore，写公共目录不需要任何权限，
+      所以这条声明带了 maxSdkVersion="28" —— 只有旧系统会弹窗要它。
+      不加上限的话，新系统上会平白多出一个「存储」权限，
+      而实际根本用不到，用户看到只会犹豫。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:name=".SpeakInspireApp"
         android:allowBackup="true"

@@ -228,23 +228,30 @@ class ComposeViewModel @Inject constructor(
     }
 
     /**
-     * 把这篇（连同它的追问、发芽、选题）导出成 Markdown。
+     * 把这一篇发出去：单条 md → 系统分享面板。
+     *
+     * ## 和设置页那个「导出全部」不是一回事
+     *
+     * 导出是**备份**：一次把全部内容写进 `下载/随手记/`，用户自己去那儿找。
+     * 这里是**分享**：一次一篇，交给别人。
+     * 两个动作的心智完全不同，所以入口也不在一处——
+     * 混在一起的话，用户想发一篇出去，得先去设置页导出全部。
      *
      * 只对**已经存进思考库**的文章可用：内存里刚生成、还没落盘的文章
-     * 走导出会拿到空内容，用户会以为导出坏了。
+     * 分享出去会是一份空文件，用户会以为坏了。
      */
-    fun exportMarkdown() {
+    fun shareArticle() {
         val current = _state.value
         if (current.articleId.isBlank()) return
         viewModelScope.launch {
-            // 导出一篇文章要连它的选题一起带走，所以读一次全库。
+            // 分享一篇要连它的选题一起带走，所以读一次全库。
             // 数据量在千条以内，这点开销比多维护一条只读文章与选题的查询路径便宜。
             val library = repo.exportSnapshot()
             val md = MarkdownExporter.article(library, current.articleId)
             val name = MarkdownExporter.fileName(current.title.ifBlank { "文章" })
             val ok = MarkdownShare.share(context, name, md)
             if (!ok) {
-                _state.value = _state.value.copy(errorMessage = "没能生成导出文件，再试一次。")
+                _state.value = _state.value.copy(errorMessage = "没能生成分享文件，再试一次。")
             }
         }
     }

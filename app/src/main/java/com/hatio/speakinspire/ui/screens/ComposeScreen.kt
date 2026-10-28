@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,8 +79,8 @@ fun ComposeScreen(
     canReopenDeepening: Boolean = true,
     /** 转成拍摄选题。文章存好之后才给这个入口 */
     onConvert: () -> Unit = {},
-    /** 导出成 Markdown */
-    onExport: () -> Unit = {},
+    /** 把这一篇发出去（单条 md → 分享面板）。只在文章已存进库里时可用 */
+    onShare: () -> Unit = {},
     onSettings: () -> Unit = {},
 ) {
     Scaffold(
@@ -97,6 +98,15 @@ fun ComposeScreen(
                     )
                 },
                 actions = {
+                    if (state.hasContent && state.alreadyComposed) {
+                        // 分享 ≠ 导出。
+                        // 导出是「留一份在自己手里」，统一在设置页写进下载目录；
+                        // 这个图标是「把这一篇发出去」——文章本来就是给外面看的，
+                        // 所以它留在文章这一页，而不是塞进设置里
+                        IconButton(onClick = onShare) {
+                            Icon(Icons.Default.Share, contentDescription = "分享")
+                        }
+                    }
                     if (state.hasContent) {
                         TextButton(onClick = onToggleSource) {
                             Text(
@@ -149,7 +159,6 @@ fun ComposeScreen(
                     ArticleActions(
                         onConvert = onConvert,
                         onReopenDeepening = onGoBackToDeepening,
-                        onExport = onExport,
                         showReopen = canReopenDeepening,
                     )
                 } else {
@@ -295,7 +304,7 @@ private fun SaveBar(
         }
         Spacer(Modifier.height(Spacing.xs))
         Text(
-            text = "存完之后想转选题、想再聊、想导出，都在下一个页面。",
+            text = "存完之后想转选题、想接着聊，都在下一个页面。",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -311,15 +320,24 @@ private fun SaveBar(
  * 于是「已经存过的文章」下面还挂着「存进思考库」，
  * 点它什么都不会发生（upsert 同一行），用户只能怀疑按钮坏了。
  *
- * 现在三个动作并列，代表这篇**已经存在**的文章可以往哪儿去：
- * 转成一条要拍的选题、回去接着聊、或者导出来放到别处。
+ * 现在两个动作并列，代表这篇**已经存在**的文章可以往哪儿去：
+ * 转成一条要拍的选题，或者回去接着聊。
  * 也可以什么都不做，直接返回——它是资产，不需要被消费掉。
+ *
+ * ## 为什么去掉了「导出 .md」
+ *
+ * 那个按钮导出的是**这一篇**。用户点它时的真实想法是
+ * 「我得留个备份」，而不是「我要把这一篇发给谁」——
+ * 备份应该是**全部一起**去一个看得见的目录，
+ * 而不是在每一篇文章里点一次、再选一次存到哪儿。
+ *
+ * 现在导出统一在设置页：一次把 data.json 和全量 md 写进 `下载/随手记/`。
+ * 单条内容的分享入口留在记录详情页的图标上，那里才是「把这一条发出去」的语境。
  */
 @Composable
 private fun ArticleActions(
     onConvert: () -> Unit,
     onReopenDeepening: () -> Unit,
-    onExport: () -> Unit,
     showReopen: Boolean,
 ) {
     Column(
@@ -339,21 +357,13 @@ private fun ArticleActions(
             Text("转成一条选题")
         }
         Spacer(Modifier.height(Spacing.s))
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-            // 没有来源记录时（记录已删），「回去再聊」没有目的地
-            if (showReopen) {
-                OutlinedButton(
-                    onClick = onReopenDeepening,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("回去再聊", fontSize = 13.sp)
-                }
-            }
+        // 没有来源记录时（记录已删），「回去再聊」没有目的地
+        if (showReopen) {
             OutlinedButton(
-                onClick = onExport,
-                modifier = Modifier.weight(1f),
+                onClick = onReopenDeepening,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("导出 .md", fontSize = 13.sp)
+                Text("回去再聊", fontSize = 13.sp)
             }
         }
     }

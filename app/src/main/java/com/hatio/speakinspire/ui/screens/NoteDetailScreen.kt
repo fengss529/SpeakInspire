@@ -89,7 +89,7 @@ fun NoteDetailScreen(
     onSprout: () -> Unit = {},
     onViewArticle: () -> Unit,
     onSettings: () -> Unit = {},
-    onExport: () -> Unit = {},
+    onShare: () -> Unit = {},
     onDismissMessage: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -116,7 +116,7 @@ fun NoteDetailScreen(
                     Text("记录", style = MaterialTheme.typography.titleMedium)
                 },
                 actions = {
-                    IconButton(onClick = onExport) {
+                    IconButton(onClick = onShare) {
                         Icon(Icons.Default.Share, contentDescription = "导出 Markdown")
                     }
                     IconButton(onClick = onSettings) {
