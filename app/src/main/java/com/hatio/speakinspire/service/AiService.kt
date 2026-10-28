@@ -201,6 +201,14 @@ data class DeepeningContext(
      * 能被链路测试直接断言，不依赖 Android 存储。
      */
     val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
+    /**
+     * 用户改过的问法。null 表示用 [ProbeMethod.instruction]。
+     *
+     * 和 [probeMethod] 一样放进上下文，理由也一样：
+     * 让「设置里改了什么 → 实际发出去的是什么」能被链路测试直接断言。
+     * 服务实现自己读存储的话，这条链就断了。
+     */
+    val probeInstruction: String? = null,
 ) {
     /** 已经答完的轮数 */
     val answeredRounds: Int get() = rounds.count { it.isUser }

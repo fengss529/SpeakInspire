@@ -20,14 +20,34 @@ package com.hatio.speakinspire.service
 object Prompts {
 
     /**
+     * 追问阶段的禁区。**只有这一份。**
+     *
+     * 拆成列表而不是写死在 [probeSystem] 里，是为了让设置页
+     * 能把同一份内容以灰字只读展示出去——用户改手法时能看见
+     * 「无论你写什么，这几条照样生效」。
+     *
+     * 如果界面另写一份说明文字，两份迟早对不上：
+     * 改 prompt 时忘了改界面，用户看到的承诺就不是实际发出去的东西。
+     * 现在两边读的是同一个常量，改一处两边一起变。
+     */
+    val FORBIDDEN_RULES: List<String> = listOf(
+        "- 不给结论、不给建议、不给替代方案",
+        "- 不说「你应该」「我建议你」「更好的做法是」",
+        "- 不总结用户的观点",
+        "- 不说「根据你的回答，我理解你……」",
+        "- 不安慰，不鼓励（「你说得对」也算越界）",
+        "- 不复述他的整段话再提问（最多带住他的半句原话做锚点）",
+    )
+
+    /**
      * 追问阶段的系统提示。
      *
      * ## 结构：共享禁区 + 差异化手法
      *
      * 「只问不答」是所有 [ProbeMethod] 的共同底线；
      * 换方法只换**怎么问**，绝不松动边界。
-     * 所以四种方法不是四份独立全文，而是同一段骨架里
-     * 只替换 [ProbeMethod.instruction]。以后加第五种方法，
+     * 所以三种方法不是三份独立全文，而是同一段骨架里
+     * 只替换 [ProbeMethod.instruction]。以后加第四种方法，
      * 不可能漏掉禁区——它压根不在方法里写。
      *
      * ## 收尾为什么改成「收拢式提问」
@@ -56,6 +76,14 @@ object Prompts {
         roundIndex: Int = 0,
         maxRounds: Int = 5,
         askedQuestions: List<String> = emptyList(),
+        /**
+         * 用户改过的问法。null / 空白表示用 [ProbeMethod.instruction]。
+         *
+         * **只有手法那一段能被替换。** 下面的自检、禁区、输出格式
+         * 无论传什么都不变——这是这个参数存在的全部意义：
+         * 让用户调问法，不让用户调权力。
+         */
+        methodInstruction: String? = null,
     ): String = buildString {
         appendLine("你是「随手记」的追问者。你的任务只有一个：让用户自己想得更清楚。")
         appendLine()
@@ -64,7 +92,7 @@ object Prompts {
         appendLine("他只会觉得「有道理」，然后什么都没长出来。")
         appendLine("所以你只负责问，答案必须由他自己说出来——哪怕他说得很笨。")
         appendLine()
-        appendLine(method.instruction)
+        appendLine(methodInstruction?.takeIf { it.isNotBlank() } ?: method.instruction)
         appendLine()
         appendLine("【动手之前，先在脑子里过三遍】")
         appendLine("1. 翻回最开始那条记录，把整段读完。不要只看最后一句。")
@@ -122,12 +150,7 @@ object Prompts {
             appendLine()
         }
         appendLine("【绝对禁止（任何方法都不例外）】")
-        appendLine("- 不给结论、不给建议、不给替代方案")
-        appendLine("- 不说「你应该」「我建议你」「更好的做法是」")
-        appendLine("- 不总结用户的观点")
-        appendLine("- 不说「根据你的回答，我理解你……」")
-        appendLine("- 不安慰，不鼓励（「你说得对」也算越界）")
-        appendLine("- 不复述他的整段话再提问（最多带住他的半句原话做锚点）")
+        FORBIDDEN_RULES.forEach { appendLine(it) }
         appendLine()
         appendLine("【你的输出】")
         appendLine("只输出一个开放式问题。最多两句话。")

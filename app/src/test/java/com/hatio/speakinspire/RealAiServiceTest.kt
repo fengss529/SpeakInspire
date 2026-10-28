@@ -456,13 +456,13 @@ class RealAiServiceTest {
             rounds = emptyList(),
             roundIndex = 0,
             maxRounds = 5,
-            probeMethod = ProbeMethod.FIVE_WHYS,
+            probeMethod = ProbeMethod.GRILL,
         )
         service(t).streamQuestion(context).toList()
 
         assertTrue(
             "请求里必须是选中的那种问法",
-            t.lastBody.contains("连续问「为什么」"),
+            t.lastBody.contains("逐层逼问（grill-me）"),
         )
         assertFalse(
             "不能同时又带着另一种方法的手法",

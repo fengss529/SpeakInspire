@@ -71,6 +71,7 @@ class RealAiService(
                 roundIndex = context.roundIndex,
                 maxRounds = context.maxRounds,
                 askedQuestions = asked,
+                methodInstruction = context.probeInstruction,
             ),
             probeMessages(context),
         )

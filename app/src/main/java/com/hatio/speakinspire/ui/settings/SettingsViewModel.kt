@@ -64,6 +64,8 @@ class SettingsViewModel @Inject constructor(
                 thinkingDisabled = cfg.thinkingDisabled,
                 keyAlreadySaved = savedKey.isNotBlank(),
                 probeMethod = probeStore.current(),
+                probeInstruction = probeStore.instructionOf(probeStore.current()),
+                probeInstructionCustomized = probeStore.isCustomized(probeStore.current()),
             )
         }
     }
@@ -77,7 +79,37 @@ class SettingsViewModel @Inject constructor(
      */
     fun selectProbeMethod(method: ProbeMethod) {
         probeStore.select(method)
-        _state.value = _state.value.copy(probeMethod = method)
+        // 换方法要连它的问法一起换：每个方法各自记着自己被改过什么，
+        // 不能把上一个方法的自定义台词抱到这一个身上
+        _state.value = _state.value.copy(
+            probeMethod = method,
+            probeInstruction = probeStore.instructionOf(method),
+            probeInstructionCustomized = probeStore.isCustomized(method),
+        )
+    }
+
+    /**
+     * 保存当前方法的问法。传空白 = 恢复默认。
+     *
+     * ## 这里改的到底是什么
+     *
+     * 只改**问法那一段**。禁区（不给结论、不给建议……）不在这里，
+     * 它由 [com.hatio.speakinspire.service.Prompts.probeSystem] 固定拼上，
+     * 界面上以灰字只读展示。
+     *
+     * 换句话说：用户可以把「怎么问」改成任何样子，
+     * 但改不出「可以直接给答案」。
+     */
+    fun saveProbeInstruction(text: String) {
+        val method = _state.value.probeMethod
+        probeStore.saveInstruction(method, text)
+        _state.value = _state.value.copy(
+            probeInstruction = probeStore.instructionOf(method),
+            probeInstructionCustomized = probeStore.isCustomized(method),
+            // 存完给个明确回执。这个操作没有别的可见结果，
+            // 不提示的话用户会怀疑到底存没存
+            saved = true,
+        )
     }
 
     fun selectProvider(providerId: String) {
@@ -337,6 +369,10 @@ data class SettingsUiState(
     val saveError: String? = null,
     /** 追问方法。与服务商无关，单独存在偏好里 */
     val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
+    /** 当前方法实际生效的问法段（用户改过就是改过的那份） */
+    val probeInstruction: String = "",
+    /** 当前方法是否被改过。界面据此显示「恢复默认」 */
+    val probeInstructionCustomized: Boolean = false,
     /** 正在导出全部 */
     val exporting: Boolean = false,
     /** 失败/提示信息，用底部提示条显示。null = 没有要提示的 */

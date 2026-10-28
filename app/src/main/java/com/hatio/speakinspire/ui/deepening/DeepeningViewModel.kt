@@ -55,7 +55,7 @@ import javax.inject.Inject
 class DeepeningViewModel @Inject constructor(
     private val repo: IdeaRepository,
     private val ai: AiService,
-    private val probeStore: ProbeMethodStore,
+    private val store: ProbeMethodStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DeepeningUiState())
@@ -93,6 +93,9 @@ class DeepeningViewModel @Inject constructor(
             // 而且用户看到的收尾卡会随着新问题到达一闪就没。
             val capped = answered >= maxRounds
 
+            // 设置里存的方法与手法，一次性读出来。见下面 probeMethod 的说明
+            val method = store.current()
+
             _state.value = DeepeningUiState(
                 noteId = noteId,
                 noteTitle = idea.note.title,
@@ -102,9 +105,13 @@ class DeepeningViewModel @Inject constructor(
                 answeredCount = answered,
                 maxRounds = maxRounds,
                 errorMessage = null,
-                // 每次进来读一次：用户可能在设置里换了问法，
-                // 下次进来就该按新方法问
-                probeMethod = probeStore.current(),
+                // 每次进来读一次：用户可能在设置里换了问法、或者改了手法，
+                // 下次进来就该按新的一套问。
+                // 读进状态而不是每次现读，是为了整场会话用同一套——
+                // 问到第三轮时用户跑去设置里改了手法，
+                // 这场对话不该中途换个人
+                probeMethod = method,
+                probeInstruction = store.instructionOf(method),
             )
 
             // 会话已收尾（已成文、用户主动结束、或轮数用尽）就不再自动问
@@ -163,6 +170,7 @@ class DeepeningViewModel @Inject constructor(
             roundIndex = history.count { it.answered },
             maxRounds = current.maxRounds,
             probeMethod = current.probeMethod,
+            probeInstruction = current.probeInstruction,
         )
 
         try {
@@ -266,6 +274,7 @@ class DeepeningViewModel @Inject constructor(
                 roundIndex = nextRounds.count { it.answered } - 1,
                 maxRounds = base.maxRounds,
                 probeMethod = base.probeMethod,
+                probeInstruction = base.probeInstruction,
             )
 
             try {
@@ -504,6 +513,13 @@ data class DeepeningUiState(
     val errorMessage: String? = null,
     /** 本次会话用的追问方法。进页面时从设置里读一次 */
     val probeMethod: ProbeMethod = ProbeMethod.DEFAULT,
+    /**
+     * 本次会话用的问法段（用户可能改过）。null = 用方法自带的那段。
+     *
+     * 和 [probeMethod] 一起读进状态：一场追问从头到尾必须用同一套问法。
+     * 每轮现读的话，用户问到一半去设置里改了手法，这场对话会中途换个人。
+     */
+    val probeInstruction: String? = null,
     /**
      * 每次「该用户说话了」就 +1。
      *

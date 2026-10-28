@@ -200,8 +200,9 @@ fun DeepeningScreen(
                         // 留下方法名是有用的：用户在设置里换了问法，
                         // 回到这里如果毫无变化，他会怀疑「是不是没生效」。
                         Text(
-                            text = state.probeMethod.label,
+                            text = state.probeMethod.shortLabel,
                             fontSize = 11.sp,
+                            maxLines = 1,
                             color = MaterialTheme.colorScheme.outline,
                             modifier = Modifier.padding(top = 2.dp),
                         )

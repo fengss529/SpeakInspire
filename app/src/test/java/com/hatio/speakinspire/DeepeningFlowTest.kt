@@ -145,6 +145,63 @@ class DeepeningFlowTest {
     }
 
     @Test
+    fun `设置里改过的问法会一路传进请求`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("你写的那套问法问到的问题")
+        // 用户自己改过苏格拉底式的手法
+        probeStore.saveInstruction(ProbeMethod.SOCRATIC, "【我自己的问法】先问他这句话是谁说的。")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        val ctx = ai.captured.last { it.stage == FakeAiService.Stage.PROBE }.context
+        assertEquals(
+            "改过的问法必须真的发出去，否则设置页那个输入框是摆设",
+            "【我自己的问法】先问他这句话是谁说的。",
+            ctx?.probeInstruction,
+        )
+    }
+
+    @Test
+    fun `没改过问法时上下文里就是内置那段，不是空白`() = runTest {
+        seedNote()
+        ai.questionScript = listOf("问题")
+
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        val ctx = ai.captured.last { it.stage == FakeAiService.Stage.PROBE }.context
+        // instructionOf() 在没改过时返回内置那份，而不是 null——
+        // 设置页要靠它预填输入框（空框会让人不知道从哪写起）。
+        // 所以这里断言的是"内容和内置一致"，不是"为空"
+        assertEquals(ProbeMethod.SOCRATIC.instruction, ctx?.probeInstruction)
+    }
+
+    @Test
+    fun `问法段在 prompt 里只出现一次，不会叠加两份`() = runTest {
+        // 上下文里带着问法、prompt 又拼一遍的话，两段一模一样的话会并列出现，
+        // 白烧 token，而且模型可能把重复当强调
+        seedNote()
+        ai.questionScript = listOf("问题")
+        val vm = DeepeningViewModel(repo, ai, probeStore)
+        vm.load("n1")
+
+        val ctx = ai.captured.last { it.stage == FakeAiService.Stage.PROBE }.context!!
+        val prompt = com.hatio.speakinspire.service.Prompts.probeSystem(
+            method = ctx.probeMethod,
+            roundIndex = ctx.roundIndex,
+            maxRounds = ctx.maxRounds,
+            methodInstruction = ctx.probeInstruction,
+        )
+        val marker = "【这一轮用的方法"
+        assertEquals(
+            "问法段只能出现一次",
+            1,
+            Regex(Regex.escape(marker)).findAll(prompt).count(),
+        )
+    }
+
+    @Test
     fun `换方法后重新进入页面会读到新方法`() = runTest {
         seedNote()
         ai.questionScript = listOf("第一次的问题", "第二次的问题")
@@ -154,11 +211,11 @@ class DeepeningFlowTest {
         assertEquals(ProbeMethod.DEFAULT, vm.state.value.probeMethod)
 
         // 模拟用户去设置里换了问法，再回到这个话题
-        probeStore.select(ProbeMethod.STAR)
+        probeStore.select(ProbeMethod.GRILL)
         val vm2 = DeepeningViewModel(repo, ai, probeStore)
         vm2.load("n1")
 
-        assertEquals("重新进来应吃到新设置", ProbeMethod.STAR, vm2.state.value.probeMethod)
+        assertEquals("重新进来应吃到新设置", ProbeMethod.GRILL, vm2.state.value.probeMethod)
     }
 
     @Test

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +61,7 @@ import com.hatio.speakinspire.BuildConfig
 import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.service.ProbeMethod
+import com.hatio.speakinspire.service.Prompts
 import com.hatio.speakinspire.ui.settings.SettingsUiState
 import com.hatio.speakinspire.ui.settings.SettingsViewModel
 import com.hatio.speakinspire.ui.settings.TestResult
@@ -92,6 +94,8 @@ fun SettingsScreen(
     onThinking: (Boolean) -> Unit,
     /** 选追问方法。立刻生效，不需要点保存 */
     onSelectProbeMethod: (ProbeMethod) -> Unit,
+    /** 保存当前方法的问法。传空白 = 恢复默认 */
+    onSaveProbeInstruction: (String) -> Unit = {},
     onTest: () -> Unit,
     onSave: () -> Unit,
     /** 提示弹完后回调，把 saved 标志清掉 */
@@ -305,7 +309,7 @@ fun SettingsScreen(
             SectionLabel("用哪种追问方式")
             Spacer(Modifier.height(Spacing.xs))
             Text(
-                text = "只换问法，不换规矩：四种方式都只提问、不给答案。",
+                text = "只换问法，不换规矩：三种方式都只提问、不给答案。",
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.outline,
@@ -321,6 +325,14 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            ProbeInstructionEditor(
+                method = state.probeMethod,
+                instruction = state.probeInstruction,
+                customized = state.probeInstructionCustomized,
+                onSave = onSaveProbeInstruction,
+                onReset = { onSaveProbeInstruction("") },
+            )
 
             Spacer(Modifier.height(Spacing.xl))
 
@@ -584,6 +596,140 @@ private fun ProbeMethodRow(
                 fontSize = 10.sp,
                 lineHeight = 15.sp,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+            )
+        }
+    }
+}
+
+/**
+ * 问法编辑区。
+ *
+ * ## 为什么允许用户改问法
+ *
+ * 「怎么问」是很私人的事：有人嫌苏格拉底式太绕、总在抠字眼，
+ * 有人嫌反方质询太冲、像在吵架。这些偏好没法用几个预设覆盖，
+ * 而预设越多，用户越要先读一遍说明才能选。
+ *
+ * ## 为什么不是空白框
+ *
+ * 空白框会让人不知道从哪写起。所以默认**预填当前方法那份能用的问法**——
+ * 他改几个字就是自己的了，改坏了还有「恢复默认」。
+ * 这就是「外壳 + 引导式填空」：给一个能跑起来的骨架，而不是一张白纸。
+ *
+ * ## 为什么禁区是灰字只读
+ *
+ * 用户在这里改的只有手法。真正决定「AI 不会给答案」的那几条
+ * 不在这个框里，它们由 `Prompts.probeSystem` 固定拼在 prompt 末尾。
+ *
+ * 把禁区摆在下面不是装饰：用户改完问法会担心「我这么写会不会把它的分寸改坏了」。
+ * 看见那几行还在，他才敢改。反过来，如果禁区也能编辑，
+ * 这个 App 的核心承诺就成了一句可选项。
+ */
+@Composable
+private fun ProbeInstructionEditor(
+    method: ProbeMethod,
+    instruction: String,
+    customized: Boolean,
+    onSave: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    // 草稿跟着「方法 + 已生效的问法」走。
+    //
+    // 只 key 方法 id 是不够的：设置页的数据是异步读出来的，
+    // 首帧拿到的 probeInstruction 是空串，编辑框会先画成一个空盒子；
+    // 等真正的那段问法到达时，因为 key 没变，草稿不会被重置——
+    // 用户看到的就是一个空框，还以为是默认问法是空的。
+    // 加上 instruction 之后，数据到位就自动填进来。
+    // 打字过程中 instruction 不变，所以不会打断输入。
+    var draft by remember(method.id, instruction) { mutableStateOf(instruction) }
+
+    Spacer(Modifier.height(Spacing.m))
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "「${method.label}」具体怎么问",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (customized) {
+            Text(
+                text = "已改过",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+    Spacer(Modifier.height(Spacing.xs))
+    Text(
+        text = "只写「怎么问」。不用写别说结论、别给建议——那几条在下面，改不掉。",
+        fontSize = 10.sp,
+        lineHeight = 16.sp,
+        color = MaterialTheme.colorScheme.outline,
+    )
+    Spacer(Modifier.height(Spacing.s))
+
+    androidx.compose.foundation.layout.Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(horizontal = Spacing.m, vertical = Spacing.m),
+    ) {
+        BasicTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                lineHeight = 19.sp,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 120.dp),
+        )
+    }
+
+    Spacer(Modifier.height(Spacing.s))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (customized) {
+            TextButton(onClick = { draft = ""; onReset() }) {
+                Text("恢复默认", fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        TextButton(
+            onClick = { onSave(draft) },
+            // 没改就不让点：这个按钮点不出任何变化，能点只会让人怀疑
+            enabled = draft != instruction,
+        ) {
+            Text("保存问法", fontSize = 12.sp)
+        }
+    }
+
+    // ---------- 禁区：只读 ----------
+    Spacer(Modifier.height(Spacing.s))
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+            .padding(Spacing.m),
+    ) {
+        Text(
+            text = "无论怎么改，这几条不变",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Spacing.xs))
+        // 直接读 Prompts 里那一份。界面另写一份的话，
+        // 改 prompt 时忘了改界面，用户看到的承诺就不是实际发出去的东西
+        Prompts.FORBIDDEN_RULES.forEach { rule ->
+            Text(
+                text = rule.removePrefix("- "),
+                fontSize = 10.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.outline,
             )
         }
     }
