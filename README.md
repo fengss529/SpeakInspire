@@ -1,17 +1,76 @@
 # 随手记 SpeakInspire
 
-提升口语表达能力的工具。核心链路：**随手记 → AI 追问 → 发芽 → AI 成文 → 思想库 → 选题 → 选题库 → 拍摄**。
+[![CI](https://github.com/fengss529/SpeakInspire/actions/workflows/ci.yml/badge.svg)](https://github.com/fengss529/SpeakInspire/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-```bash
-gradlew.bat test                # 跑全部 546 条单元测试
-gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
-```
+**把「说得清楚」练出来。** 随手记下想说的话 → AI 追问把你没说透的地方问出来 → 写成文章 → 拆成拍摄选题 → 你用自己的相机拍成短视频。
 
-包名 `com.hatio.speakinspire`（不要改，改了覆盖安装会失败）。当前版本 **V0.11.0**（versionCode 22）。
+这个 App **不录音、不拍摄、不打分**。它只做一件事：让你在想清楚之前，别急着说出口。
+
+<p align="center">
+  <img src="docs/screenshots/01-notes.png" width="23%" alt="记录列表"/>
+  <img src="docs/screenshots/02-deepen.png" width="23%" alt="AI 追问"/>
+  <img src="docs/screenshots/03-compose.png" width="23%" alt="成文与来源标注"/>
+  <img src="docs/screenshots/04-stats.png" width="23%" alt="统计月历"/>
+</p>
 
 ---
 
-## 当前状态
+## 为什么需要它
+
+口语不好很少是嘴的问题。常见的是两件事断在了中间：
+
+- **想过了，但没被追问过。** 讲出来的是印象，不是判断。
+- **想清楚了，但从没完整说过一次。** 一开口就散。
+
+所以链路上每一步只做一件事。AI 在不同阶段**权力不同**：追问阶段只准提问、不准给答案；成文阶段才允许补论证，而且每一段都要标出「你说的」还是「AI 补」。这条边界是整个项目最不肯让步的地方，有 17 条测试守着它。
+
+## 快速开始
+
+| 你需要 | 要求 | 踩过的坑 |
+|---|---|---|
+| JDK | **21** | 别用 25。AGP 8.13 不接受，报错只有一行 `25.0.3`，很难定位 |
+| Android SDK | Platform 36 + Build-Tools 36.0.0 | `compileSdk = 36` |
+| AI API Key | DeepSeek 或 小米 MiMo | 应用里**没有内置 key**，必须自备 |
+
+```bash
+git clone https://github.com/fengss529/SpeakInspire.git
+cd SpeakInspire
+echo "sdk.dir=/你的/AndroidSdk/路径" > local.properties
+./gradlew :app:assembleDebug          # macOS / Linux
+gradlew.bat :app:assembleDebug        # Windows
+```
+
+APK 在 `app/build/outputs/apk/debug/`。不想自己构建的话，[Releases](https://github.com/fengss529/SpeakInspire/releases) 里有已签名的安装包。
+
+> **第一次打开请先去「设置」填 API Key。**
+> 不填的话追问和成文全部返回 401，界面上看起来就像「这个 App 是坏的」。
+> Key 存在 Tink 加密的 SharedPreferences 里，不进数据库、不写日志、不会随导出文件带出去。
+
+## 能做什么
+
+| | 做什么 |
+|---|---|
+| **记录** | 想到什么记什么。这一屏没有任何 AI 介入，纯输入 |
+| **追问** | 苏格拉底式 / 逐层逼问 / 反方质询。**只提问，不给答案**，最多 5 轮，随时可以收尾 |
+| **发芽** | 一条记录只聊出一两个洞察、凑不成文章时，让它们独立「长」出来。可多次、可换角度 |
+| **成文** | 四种风格：随感 / 观点文 / 口播稿 / 清单法。逐段标注「你说的」「AI 补」「AI 补 · 含他人观点」 |
+| **选题** | 拆成 4 段意群骨架 + 手边的料（例子 / 数据 / 金句 / 引用），不写逐字稿 |
+| **统计** | 月历上标出有记录的日子。只汇总客观数据，不做质量评分 |
+
+**拍摄这一步不在 App 里。** 你用手机相机或任何短视频工具拍完，回来点一下「我拍好了」就行——所以这里没有取景框，也没有录制按钮。
+
+## 明确不做的三件事
+
+1. **不录音、不拍摄。** 那是相机的事，塞进来说不清边界。
+2. **不给质量评分。** 分数是最便宜、最没用、最容易误导人的反馈。
+3. **不在追问阶段给答案。** 一旦 AI 给了结论，用户就没有自己想的动力了。
+
+第 3 条有测试守着：`PromptBoundaryTest` 17 条断言，**红了不要改断言去迁就代码**。
+
+---
+
+## 项目状态
 
 | 层 | 状态 | 说明 |
 |---|---|---|
@@ -24,17 +83,20 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 
 **已验证的完整链路**：记录 → 详情 → 追问（真实模型流式）→ 成文（四风格 + 来源视图）→ 转选题（骨架 + 素材）→ 标记已拍摄。
 
+当前版本 **V0.11.0**（versionCode 22）。包名 `com.hatio.speakinspire`——升级覆盖依赖它，改了就装不上。
+
 ### 版本沿革
 
 | 版本 | 内容 |
 |---|---|
-| V0.8 | 追问四种方法学、四道边界；修缺逗号导致的全局 400 |
+| V0.8 | 追问方法学与四道边界；修缺逗号导致的全局 400 |
 | V0.9 | 发芽（DB v3）、Markdown 导出、设置入口全局化、去线性化三入口 |
-| V0.10 | 三种资源彻底独立（DB v4）：视图拆分、三 tab 补全、回收站可用；导出改 `data.json` + 全量 md |
+| V0.10 | 三种资源彻底独立（DB v4）：视图拆分、回收站可用；导出改 `data.json` + 全量 md |
 | V0.11 | 统计页月历、详情页逐段内联编辑、选题去滑动；**DB v5**：成文四风格、成文吃发芽、选题素材区 |
 
+## 开发环境说明
 
-### 环境
+下面这些是**开发这台机器时**的具体路径，别人 clone 不需要照着配，看「快速开始」那张表就够。留着是因为换机器时踩过的坑值得记下来。
 
 | 组件 | 位置 / 版本 |
 |---|---|
@@ -44,12 +106,16 @@ gradlew.bat :app:assembleDebug  # 出 APK（app/build/outputs/apk/debug/）
 | Android SDK | `D:\soft\AndroidSdk`（API 36） |
 | Gradle | 8.13（用项目 wrapper） |
 
-`gradle.properties` 里已经有 `org.gradle.java.home=D\:\\soft\\jdk21`。
+**JDK 路径故意不写在 `gradle.properties` 里。** 那是个本机绝对路径，写进去会跟着 git 走，换台电脑 clone 下来就错，而错误信息只有一行版本号，极难定位。现在它放在 `GRADLE_USER_HOME/gradle.properties`（Windows 上是 `C:\Users\<你>\.gradle\gradle.properties`）：
+
+```properties
+org.gradle.java.home=D:/你的/jdk21
+```
 
 > `gradlew --version` 仍显示 `Launcher JVM: 25.0.3` —— **正常**，它只反映启动器。
 > 判断配置是否生效只能看构建结果。
 
-`JAVA_HOME` / `ANDROID_HOME` 全空也能构建，靠 `local.properties` + `org.gradle.java.home`。
+`JAVA_HOME` / `ANDROID_HOME` 全空也能构建，靠 `local.properties`（SDK 路径）+ 上面那个文件（JDK 路径）。
 
 命令行构建、模拟器启动见 `启动模拟器.bat`、`检查环境.bat`、`Studio打开指引.md`。
 
@@ -589,3 +655,69 @@ v4 把它们拆成三种各自有 id、各自有生命周期的资源，视图�
 同样在界面和代码上各守一层：编辑态的规则说明
 （`MaterialKit.RULE_HINT`）与 `sanitize` 必须说同一件事，
 清空金句出处点保存，那条真的消失——这行字不是装饰。
+
+---
+
+## 发布（维护者）
+
+### 签名
+
+发布包用 `keystore.properties` 里配置的密钥签名。这个文件在 `.gitignore` 里，**绝不能提交**——
+别人同时拿到 `.jks` 和密码，就能签出和你一模一样的包，而且你无法作废：
+
+```properties
+storeFile=/绝对路径/speakinspire-release.jks
+storePassword=…
+keyAlias=…
+keyPassword=…
+```
+
+```bash
+./gradlew assembleRelease
+# 产物：app/build/outputs/apk/release/app-release.apk
+```
+
+> **这个 keystore 文件一旦丢失，已安装的用户就永远无法升级。**
+> 签名不同的包不能覆盖安装，只能卸载重装，而卸载会清掉全部数据。
+> 请离线备份，并且不要只备份在一个地方。
+
+没有 `keystore.properties` 时，`assembleRelease` 会产出未签名包。这是**有意的**，不是漏配——
+别人 clone 和 CI 都不该被密钥缺失卡住。
+
+### 本地验证混淆
+
+Release 开了 R8 和资源压缩（体积从 17.7 MB 降到 1.6 MB）。但签名不同的包不能覆盖安装，
+卸载又会连 Tink 主密钥一起销毁（加密存的 API Key 再也解不开）。所以本地验证混淆时，
+
+```bash
+./gradlew assembleRelease -PuseDebugSigningForRelease=true
+adb install -r app/build/outputs/apk/release/app-release.apk   # 原有数据保留
+```
+
+验证完**务必不带参数重建一次**，否则发出去的包里装的是调试签名。
+
+验证要看的不是「能不能启动」，而是这三条——它们正好是 R8 有能力压坏的部分：
+
+1. 记录列表能读出数据（Room 生成的 DAO 和 `_Impl` 是否被正确保留）
+2. 追问能拿到真实回复（Tink 解密 API Key、SSE 帧解析）
+3. 导出能出 `data.json`（手写 JSON 序列化不依赖反射，但字段名不能变）
+
+### CI 做什么
+
+`.github/workflows/ci.yml` 只跑测试，不构建 APK——密钥不进仓库。两个变体都跑：
+Release 变体会开 R8，混淆规则漏了 `keep` 只会在这个变体里暴露。这次就是在这里第一次撞上
+`security-crypto` 的 Tink 缺少 `com.google.errorprone.annotations.*`，本地只构建 debug 时完全看不到。
+
+---
+
+## 许可证
+
+[GPL-3.0](LICENSE)。
+
+可以自由使用、修改、分发，包括商用。但**分发修改后的版本时，必须同样以 GPL-3.0 开源**，并保留版权声明。
+
+```
+Copyright (C) 2026 Kevin Ho
+```
+
+Release 里的 APK 是对应 tag 的构建产物，源码在同一仓库的同一 tag 下。

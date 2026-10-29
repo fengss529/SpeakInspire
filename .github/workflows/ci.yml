@@ -1,0 +1,68 @@
+name: CI
+
+# 只做一件事：证明「测试全绿」这句话是真的。
+# 不构建 APK——签名密钥不在仓库里，也不该在仓库里。
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 单元测试（debug + release 两个变体）
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      # 项目用 JDK 21 构建。
+      # 注意别改成 25：AGP 8.13 不接受，报错只有一行版本号，很难定位。
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 缓存 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # SDK 只装构建要用的那一套。
+      # 显式接受许可，否则 runner 会卡在交互式提示上（CI 里没有人能敲 y）。
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装平台与构建工具
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          # setup-android 不同版本的导出变量名不一致，两个都试
+          echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > local.properties
+          cat local.properties
+
+      # 两个变体都跑：Release 会开启 R8，混淆规则漏了 keep 只会在这里暴露，
+      # 本地一直只构建 debug 的话永远发现不了。
+      - name: 跑测试
+        run: ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          retention-days: 7

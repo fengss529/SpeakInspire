@@ -1,9 +1,33 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+}
+
+// ===== 发布签名 =====
+//
+// 密码与 keystore 路径放在项目根的 keystore.properties（已在 .gitignore）。
+// 这个文件**不存在时**，release 仍然能构建，只是产出未签名包——
+// 这是有意的，不是漏配：
+//   · 别人 clone 下来跑 gradlew assembleRelease 不该卡在「找不到密钥」；
+//   · 远程 CI 里没有密钥，它只需要跑测试。
+//
+// 想把签名带进 CI，就用环境变量注入，别把 jks 塞进仓库：
+//   ORG_GRADLE_PROJECT_storePassword / keyPassword 之类（见 README「发布」一节）
+
+// 见 buildTypes.release 里的说明：只在本地验证混淆时用
+val useDebugSigningForRelease =
+    providers.gradleProperty("useDebugSigningForRelease").orNull == "true"
+
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -21,6 +45,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                // v1 签名要给 Android 6 及更早；minSdk 是 26，其实用不到，
+                // 但留着不增加体积，且某些第三方分发渠道仍会读 v1
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -29,6 +69,18 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // 没有签名配置时为 null，Gradle 产出 app-release-unsigned.apk
+            //
+            // 传 -PuseDebugSigningForRelease=true 会用 debug 签名构建这个变体。
+            // 用途只有一个：在已装 debug 包的设备上覆盖安装，**保留原有数据**
+            // 地验证 R8 混淆有没有把功能压坏。签名不同就必须先卸载，
+            // 而卸载会连 Tink 主密钥一起销毁，加密存的 API Key 就再也解不开了。
+            // 正式发包时绝不要带这个参数。
+            signingConfig = if (useDebugSigningForRelease) {
+                signingConfigs.getByName("debug")
+            } else {
+                signingConfigs.findByName("release")
+            }
         }
     }
 

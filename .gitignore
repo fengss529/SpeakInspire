@@ -11,6 +11,12 @@ captures/
 *.apk
 *.aab
 
+# ===== 签名材料：一旦提交，等于把发布权交给所有人 =====
+# 别人拿到 .jks + 密码，可以签出和你一模一样的包，且你无法作废。
+*.jks
+*.keystore
+keystore.properties
+
 # Room 导出的 schema 要提交（迁移校验用）
 # app/schemas/  ← 故意不忽略
 # 模拟器灌数据用的临时脚本，不进仓库
