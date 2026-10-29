@@ -7,6 +7,7 @@ import com.hatio.speakinspire.domain.ArticleView
 import com.hatio.speakinspire.domain.Library
 import com.hatio.speakinspire.domain.NoteView
 import com.hatio.speakinspire.domain.TopicView
+import com.hatio.speakinspire.service.DraftStyle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -142,7 +143,10 @@ object MarkdownExporter {
     private fun appendArticleBody(sb: StringBuilder, a: Article) {
         sb.appendLine("## 文章：${a.title}")
         sb.appendLine()
-        sb.appendLine("> ${formatTime(a.writtenAt)}")
+        // 风格只在这篇确实记过的时候写。v5 之前的文章没有这个字段，
+        // 给它补一个「随感」等于替用户记错了一件事
+        val style = DraftStyle.byIdOrNull(a.styleId)
+        sb.appendLine(if (style != null) "> ${formatTime(a.writtenAt)} · ${style.label}" else "> ${formatTime(a.writtenAt)}")
         sb.appendLine()
         a.paragraphs.forEach { p ->
             sb.appendLine(p.text.trim())
@@ -199,6 +203,18 @@ object MarkdownExporter {
             sb.appendLine("- **${s.title}** · ${s.seconds} 秒")
             s.phrases.forEach { p -> sb.appendLine("  - $p") }
             s.cues.forEach { c -> sb.appendLine("  - _${c.icon}：${c.text}_") }
+        }
+        // 手边的料。有出处就把出处一起写出来——
+        // 导出的是给别人看/给以后的自己看的东西，
+        // 一句没有来路的「某某说过」比没有这句话更糟
+        if (script.materials.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("**手边的料**")
+            sb.appendLine()
+            script.materials.forEach { m ->
+                val src = if (m.hasSource) "（${m.source.trim()}）" else ""
+                sb.appendLine("- _${m.kind.label}_ ${m.text.trim()}$src")
+            }
         }
         if (script.note.isNotBlank()) {
             sb.appendLine()

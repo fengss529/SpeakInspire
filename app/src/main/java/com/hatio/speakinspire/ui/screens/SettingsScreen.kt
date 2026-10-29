@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.BuildConfig
 import com.hatio.speakinspire.R
 import com.hatio.speakinspire.data.model.ProviderConfig
+import com.hatio.speakinspire.service.DraftStyle
 import com.hatio.speakinspire.service.ProbeMethod
 import com.hatio.speakinspire.service.Prompts
 import com.hatio.speakinspire.ui.settings.SettingsUiState
@@ -96,6 +97,10 @@ fun SettingsScreen(
     onSelectProbeMethod: (ProbeMethod) -> Unit,
     /** 保存当前方法的问法。传空白 = 恢复默认 */
     onSaveProbeInstruction: (String) -> Unit = {},
+    /** 选成文默认风格。立刻生效 */
+    onSelectDraftStyle: (DraftStyle) -> Unit = {},
+    /** 保存补充写作要求。传空白 = 清掉 */
+    onSaveDraftStyleNote: (String) -> Unit = {},
     onTest: () -> Unit,
     onSave: () -> Unit,
     /** 提示弹完后回调，把 saved 标志清掉 */
@@ -332,6 +337,39 @@ fun SettingsScreen(
                 customized = state.probeInstructionCustomized,
                 onSave = onSaveProbeInstruction,
                 onReset = { onSaveProbeInstruction("") },
+            )
+
+            // ---------- 成文风格 ----------
+            //
+            // 放在追问方式之后：先把「怎么问」定下来，再定「怎么写」。
+            // 这两个是同一层的东西（都在调 AI 的手法），
+            // 所以摆在一起；服务商配置在它们前面，因为那是接线。
+            Spacer(Modifier.height(Spacing.xl))
+
+            SectionLabel("写成什么风格")
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "这是以后写文章时的默认风格。成文那一页也能临时换一种，" +
+                    "换了不影响这里。",
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.height(Spacing.s))
+
+            Column(Modifier.selectableGroup()) {
+                DraftStyle.entries.forEach { style ->
+                    StyleRow(
+                        style = style,
+                        selected = state.draftStyle == style,
+                        onClick = { onSelectDraftStyle(style) },
+                    )
+                }
+            }
+
+            DraftStyleNoteEditor(
+                note = state.draftStyleNote,
+                onSave = onSaveDraftStyleNote,
             )
 
             Spacer(Modifier.height(Spacing.xl))
@@ -725,6 +763,170 @@ private fun ProbeInstructionEditor(
         // 直接读 Prompts 里那一份。界面另写一份的话，
         // 改 prompt 时忘了改界面，用户看到的承诺就不是实际发出去的东西
         Prompts.FORBIDDEN_RULES.forEach { rule ->
+            Text(
+                text = rule.removePrefix("- "),
+                fontSize = 10.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+    }
+}
+
+/**
+ * 风格行。
+ *
+ * [DraftStyle.blurb] 是这一行的重点——「观点文」三个字对不同的人
+ * 意味着不同的东西，写出来是什么样才是他判断的依据。
+ * [DraftStyle.bestFor] 再补一句「什么时候该用」，
+ * 因为用户往往是先有场景（要发出去 / 要照着拍），再挑风格。
+ */
+@Composable
+private fun StyleRow(
+    style: DraftStyle,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(vertical = Spacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(start = Spacing.s)) {
+            Text(style.label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                style.blurb,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Text(
+                "适合：${style.bestFor}",
+                fontSize = 10.sp,
+                lineHeight = 15.sp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+            )
+        }
+    }
+}
+
+/**
+ * 风格补充要求。
+ *
+ * ## 为什么这里默认是空的，而追问那边预填
+ *
+ * 追问那边用户改的是**手法本身**，预设被改掉就不再生效，所以要预填，
+ * 让他在一份能跑的文字上改。
+ *
+ * 风格这边预设**一直在生效**，这个框是「还想额外加点什么」
+ * （再口语一点、别用感叹号、多举一个例子）。
+ * 预填会把预设复制一遍，用户改一处就变成两处打架——
+ * 改了框里的，预设那段还在，到底听谁的说不清。
+ */
+@Composable
+private fun DraftStyleNoteEditor(
+    note: String,
+    onSave: (String) -> Unit,
+) {
+    // 草稿跟着已保存的值走：数据是异步读出来的，
+    // 首帧拿到空串，等真值到了要能填进来
+    var draft by remember(note) { mutableStateOf(note) }
+
+    Spacer(Modifier.height(Spacing.m))
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "还想再加点什么（可留空）",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (note.isNotBlank()) {
+            Text(
+                text = "已加过",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+    Spacer(Modifier.height(Spacing.xs))
+    Text(
+        text = "这段是附加在风格之上的，不会替换掉它的结构。" +
+            "比如「再口语一点」「别用感叹号」。",
+        fontSize = 10.sp,
+        lineHeight = 16.sp,
+        color = MaterialTheme.colorScheme.outline,
+    )
+    Spacer(Modifier.height(Spacing.s))
+
+    androidx.compose.foundation.layout.Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(horizontal = Spacing.m, vertical = Spacing.m),
+    ) {
+        if (draft.isEmpty()) {
+            Text(
+                text = "例：多用短句，别用感叹号，别下结论。",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        BasicTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+                lineHeight = 19.sp,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 60.dp),
+        )
+    }
+
+    Spacer(Modifier.height(Spacing.s))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (note.isNotBlank()) {
+            TextButton(onClick = { draft = ""; onSave("") }) {
+                Text("清掉", fontSize = 12.sp)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        TextButton(
+            onClick = { onSave(draft) },
+            // 没改就不让点：点不出变化，能点只会让人怀疑存没存上
+            enabled = draft.trim() != note.trim(),
+        ) {
+            Text("保存", fontSize = 12.sp)
+        }
+    }
+
+    // ---------- 禁区：只读 ----------
+    Spacer(Modifier.height(Spacing.s))
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+            .padding(Spacing.m),
+    ) {
+        Text(
+            text = "无论选哪种风格、加什么要求，这几条不变",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(Spacing.xs))
+        // 和追问那边同一套做法：直接读 prompt 里那一份。
+        // 界面另写一份的话，改 prompt 时忘了改界面，
+        // 用户看到的承诺就不是实际发出去的东西
+        Prompts.DRAFT_FORBIDDEN.forEach { rule ->
             Text(
                 text = rule.removePrefix("- "),
                 fontSize = 10.sp,

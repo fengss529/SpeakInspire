@@ -88,6 +88,7 @@ class DeepeningFlowTest {
                     paragraphsJson = """[{"text":"我准备了整整一周","mine":true}]""",
                     writtenAt = 2_000L,
                     edited = false,
+                    styleId = "",
                 )
             )
         )

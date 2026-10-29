@@ -6,6 +6,7 @@ import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ComposeResult
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.model.ScriptOutline
+import com.hatio.speakinspire.data.model.Sprout
 import com.hatio.speakinspire.data.model.SproutSection
 import kotlinx.coroutines.flow.Flow
 
@@ -69,12 +70,22 @@ interface AiService {
     suspend fun deriveAngles(article: ArticleDraft): List<Angle>
 
     /**
-     * 生成某个角度的完整拍摄骨架。
+     * 生成某个角度的完整拍摄骨架，以及几条「手边的料」。
      *
      * 与 [deriveAngles] 分开：拆角度是快速的列表操作，
      * 生成骨架是较慢的结构化输出，两者不应挤在同一次调用里。
+     *
+     * @param sprouts 这条记录已经长出来的芽。
+     *   素材**优先复用**这里带出处的连接——那是用户亲眼看过、
+     *   认可过的东西；不够的部分才让模型新找。
+     *   复用和重新生成的区别，在用户那边是「这句话我见过」
+     *   和「这又是哪来的」。
      */
-    suspend fun buildOutline(article: ArticleDraft, angle: Angle): ScriptOutline
+    suspend fun buildOutline(
+        article: ArticleDraft,
+        angle: Angle,
+        sprouts: List<Sprout> = emptyList(),
+    ): ScriptOutline
 
     /**
      * 发芽：从一条记录里长出新的连接。
@@ -209,6 +220,36 @@ data class DeepeningContext(
      * 服务实现自己读存储的话，这条链就断了。
      */
     val probeInstruction: String? = null,
+    /**
+     * 这条记录已经长出来的芽。
+     *
+     * 成文时它们会作为【他自己长过的芽】发给模型——用户认可的连接、
+     * 别人说过的话、带出处的引用都在这里。
+     * 用到了芽的段落必须标 `fromSprout`，「来源」视图里单独一档。
+     *
+     * 也和 [includeSprouts] 配合：用户在成文页取消勾选就不发。
+     */
+    val sprouts: List<Sprout> = emptyList(),
+    /**
+     * 成文页顶部那三个可勾芯片。
+     *
+     * **默认全选。** 设计意图是「综合记录、回答、发芽」，
+     * 默认勾上才符合这个说法；留开关是因为芽里混着别人的话，
+     * 有人不希望它们进自己的文章。
+     */
+    val includeNote: Boolean = true,
+    val includeDialogue: Boolean = true,
+    val includeSprouts: Boolean = true,
+    /** 这一篇写哪种风格 */
+    val style: DraftStyle = DraftStyle.DEFAULT,
+    /**
+     * 用户补充的写作要求。叠加在 [style] 之上，不替换它。
+     *
+     * 和 [probeInstruction] 一样放进上下文而不是让服务实现读存储，
+     * 理由一样：让「设置里改了什么 → 实际发出去的是什么」
+     * 能被链路测试直接断言。
+     */
+    val styleInstruction: String? = null,
 ) {
     /** 已经答完的轮数 */
     val answeredRounds: Int get() = rounds.count { it.isUser }

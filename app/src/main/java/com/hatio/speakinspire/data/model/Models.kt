@@ -119,14 +119,54 @@ data class Article(
     val title: String,
     val paragraphs: List<Paragraph>,
     val writtenAt: Long,
-    val edited: Boolean = false
+    val edited: Boolean = false,
+    /**
+     * 这篇是按哪种风格写的（[com.hatio.speakinspire.service.DraftStyle.id]）。
+     *
+     * 空串 = 没记录过（v5 之前的文章，或当时还没选风格）。
+     * 存下来的用处只有一个：详情页能说出「这是篇观点文」，
+     * 而不是让用户对着正文猜。
+     */
+    val styleId: String = "",
 )
 
 data class Paragraph(
     val text: String,
     /** true = 用户在追问里说过的；false = 成文阶段 AI 补充的论证 */
-    val mine: Boolean
-)
+    val mine: Boolean,
+    /**
+     * 这段是不是从「发芽」里来的。
+     *
+     * ## 为什么要和 [mine] 分开
+     *
+     * 「来源」视图原来是两档：你说的 / AI 补。浇上发芽之后这个二分不够用了——
+     * 芽里装的是**别人的观点、别人的例子、别人的引用**。
+     * 它们既不是你说的，也不是 AI 为了圆文章临时补的论证，
+     * 而是你亲眼看过、认可过、但确实出自旁人的东西。
+     *
+     * 混进「AI 补」里会让人误解：用户会以为自己从没说过的话
+     * 被当成了通用论证。混进「你说的」更糟——那是造假。
+     *
+     * 所以第三档单独存在。它**恒为 false 的 [mine]**：
+     * 别人说的话，永远不能标成你说的。
+     */
+    val fromSprout: Boolean = false,
+) {
+    /**
+     * 界面上的来源标签。三档，别合并。
+     *
+     * 判断顺序是 [fromSprout] 优先：万一数据里出现
+     * 「既是用户说的、又来自芽」这种自相矛盾的组合，
+     * 也只能往保守的那边显示。**宁可少认一句是自己的，
+     * 也不能把别人的话算在他头上。**
+     */
+    val sourceLabel: String
+        get() = when {
+            fromSprout -> "AI 补 · 含他人观点"
+            mine -> "你说的"
+            else -> "AI 补"
+        }
+}
 
 /**
  * 拍摄文案。**同样是独立资源。**
@@ -144,8 +184,69 @@ data class Script(
     val createdAt: Long,
     val shotAt: Long? = null,
     val parked: Boolean = false,
-    val note: String = ""
+    val note: String = "",
+    /**
+     * 手边的料。**不成句，也不是稿子。**
+     *
+     * 骨架解决「按什么顺序讲」，它解决「讲的时候手里有什么」——
+     * 一个例子、一个数、一句别人说过的话。
+     *
+     * 刻意不写成段落：一旦成句成段，用户就会照着念，
+     * 而这个 App 的前提是「照着念就不练口语了」。
+     * 所以素材的形态是**一条一条的短句**，中间没有连接词，
+     * 要用哪条、怎么把它接进自己的话里，仍然是用户自己的事。
+     */
+    val materials: List<Material> = emptyList(),
 )
+
+/**
+ * 一条素材。
+ *
+ * ## 为什么 source 是硬约束而不是排版细节
+ *
+ * 「67% 的人都会这样」是模型最容易编的东西，而它一旦进了口播，
+ * 用户会当真讲出去、被追问时说不出出处。金句和引用同理——
+ * 编一个不存在的书名，比什么都不给坏一百倍。
+ *
+ * 所以**金句 / 引用 / 数据没有出处就整条丢弃**（见
+ * [com.hatio.speakinspire.domain.MaterialKit.sanitize]）。
+ * 例外的只有「例子」：生活化的例子本来就没有出处可引。
+ *
+ * 这条规矩不放进设置页、不可覆盖。它和「引用必须真」是同一条底线。
+ */
+data class Material(
+    val kind: MaterialKind,
+    val text: String,
+    /** 出处。空串表示没有——[MaterialKind.needsSource] 为 true 时这种条目会被丢掉 */
+    val source: String = "",
+) {
+    val hasSource: Boolean get() = source.isNotBlank()
+}
+
+enum class MaterialKind(val label: String, val needsSource: Boolean) {
+    EXAMPLE("例子", false),
+    DATA("数据", true),
+    QUOTE("金句", true),
+    CITATION("引用", true),
+    ;
+
+    companion object {
+        /**
+         * 模型可能回「案例」「数字」「名言」这类说法。
+         * **认不出来的一律当例子**——它对出处没有要求，
+         * 不会因为一个错词把本来能用的素材整条丢掉。
+         */
+        fun of(raw: String?): MaterialKind {
+            val v = raw?.trim().orEmpty()
+            return when {
+                v.contains("数据") || v.contains("数字") || v.equals("data", true) -> DATA
+                v.contains("金句") || v.contains("名言") || v.equals("quote", true) -> QUOTE
+                v.contains("引用") || v.contains("出处") || v.equals("citation", true) -> CITATION
+                else -> EXAMPLE
+            }
+        }
+    }
+}
 
 data class Section(
     val title: String,

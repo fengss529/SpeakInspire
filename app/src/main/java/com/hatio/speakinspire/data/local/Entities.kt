@@ -71,6 +71,13 @@ data class ArticleEntity(
     val paragraphsJson: String,
     val writtenAt: Long,
     val edited: Boolean,
+    /**
+     * 这篇按哪种风格写的（`DraftStyle.id`）。空串 = 没记录过。
+     *
+     * v5 新增。旧文章补空串而不是默认「随感」——
+     * 那时候还没有风格这回事，硬塞一个默认值等于替用户记错了一件事。
+     */
+    val styleId: String,
 )
 
 /**
@@ -93,6 +100,14 @@ data class ScriptEntity(
     val rationale: String,
     /** JSON 序列化的 List<Section> */
     val sectionsJson: String,
+    /**
+     * JSON 序列化的 List<Material>。
+     *
+     * v5 新增。存成 JSON 而不是单开一张表：素材永远跟着选题整体读、
+     * 整体写，没有「单独查某一条素材」的需要；
+     * 单开一张表只会多一次 join 和一次外键级联的风险。
+     */
+    val materialsJson: String,
     val createdAt: Long,
     val shotAt: Long?,
     /** 搁置：先不拍。**不再是「移回思考库」**——它就是选题自己的一个状态 */

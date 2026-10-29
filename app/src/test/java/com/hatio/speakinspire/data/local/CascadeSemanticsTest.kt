@@ -152,12 +152,12 @@ class CascadeSemanticsTest {
 
     private fun article(id: String, noteId: String, title: String) = ArticleEntity(
         id = id, sourceNoteId = noteId, sourceText = "我提前背了稿子，上台全忘了",
-        title = title, paragraphsJson = "[]", writtenAt = 2L, edited = false,
+        title = title, paragraphsJson = "[]", writtenAt = 2L, edited = false, styleId = "",
     )
 
     private fun script(id: String, articleId: String) = ScriptEntity(
         id = id, sourceArticleId = articleId, sourceTitle = "背稿与临场",
-        angle = "角度", rationale = "", sectionsJson = "[]", createdAt = 3L,
-        shotAt = null, parked = false, note = "",
+        angle = "角度", rationale = "", sectionsJson = "[]", materialsJson = "[]",
+        createdAt = 3L, shotAt = null, parked = false, note = "",
     )
 }

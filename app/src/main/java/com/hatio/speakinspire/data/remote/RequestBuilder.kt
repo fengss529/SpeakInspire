@@ -4,6 +4,7 @@ import com.hatio.speakinspire.data.local.extractRawValue
 import com.hatio.speakinspire.data.local.unquoteIfNeeded
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ProviderConfig
+import com.hatio.speakinspire.data.model.Sprout
 
 /**
  * 请求体构造。
@@ -110,18 +111,43 @@ object RequestBuilder {
      * [articleText] 必须带上。曾经这里只发了一句「切入角度：xxx」——
      * 模型手里没有任何素材，只能编，或者干脆返回空，
      * 界面显示「共 0 段 · 大约 0 秒」。
+     *
+     * [sprouts] 是这条记录已经长出来的芽。带上它们，
+     * 素材区就能优先复用用户看过、认过的连接——
+     * 而不是每转一次选题就重新编一套互不相干的东西。
      */
     fun outline(
         cfg: ProviderConfig,
         systemPrompt: String,
         angle: String,
         articleText: String,
+        sprouts: List<Sprout> = emptyList(),
         model: String? = null,
     ): String = chatBody(
         cfg = cfg,
         systemPrompt = systemPrompt,
         messages = listOf(
-            ChatMessage.user("文章内容：\n$articleText\n\n选定的拍摄角度：$angle"),
+            ChatMessage.user(
+                buildString {
+                    append("文章内容：\n").append(articleText).append("\n\n")
+                    append("选定的拍摄角度：").append(angle)
+                    if (sprouts.isNotEmpty()) {
+                        append("\n\n【他自己长过的芽】")
+                        append("（有出处的优先复用，那是他看过、认过的）\n")
+                        sprouts.forEachIndexed { i, sp ->
+                            append("${i + 1}. ").append(sp.title).append('\n')
+                            sp.sections.forEach { sec ->
+                                if (sec.insight.isNotBlank()) {
+                                    append("   - ").append(sec.insight.trim()).append('\n')
+                                }
+                                if (sec.hasSource) {
+                                    append("     出处：").append(sec.source.trim()).append('\n')
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
         ),
         model = model,
         stream = false,

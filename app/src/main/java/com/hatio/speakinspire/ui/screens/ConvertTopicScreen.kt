@@ -46,7 +46,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Angle
+import com.hatio.speakinspire.data.model.Material
+import com.hatio.speakinspire.data.model.MaterialKind
 import com.hatio.speakinspire.data.model.Section
+import com.hatio.speakinspire.domain.MaterialKit
 import com.hatio.speakinspire.ui.components.EditField
 import com.hatio.speakinspire.ui.theme.Spacing
 import com.hatio.speakinspire.ui.theme.StatusColors
@@ -88,6 +91,10 @@ fun ConvertTopicScreen(
     onPhrase: (Int, Int, String) -> Unit = { _, _, _ -> },
     onAddPhrase: (Int) -> Unit = {},
     onRemovePhrase: (Int, Int) -> Unit = { _, _ -> },
+    onMaterialText: (Int, String) -> Unit = { _, _ -> },
+    onMaterialSource: (Int, String) -> Unit = { _, _ -> },
+    onAddMaterial: () -> Unit = {},
+    onRemoveMaterial: (Int) -> Unit = {},
     onSettings: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -159,6 +166,10 @@ fun ConvertTopicScreen(
                         onPhrase = onPhrase,
                         onAddPhrase = onAddPhrase,
                         onRemovePhrase = onRemovePhrase,
+                        onMaterialText = onMaterialText,
+                        onMaterialSource = onMaterialSource,
+                        onAddMaterial = onAddMaterial,
+                        onRemoveMaterial = onRemoveMaterial,
                         onPark = {
                             onPark()
                             scope.launch {
@@ -354,6 +365,19 @@ private fun OutlinePreview(state: TopicUiState, onSave: () -> Unit) {
             )
         }
 
+        Spacer(Modifier.height(Spacing.l))
+
+        // 存之前也先让他看见素材。存完才发现「料不多」，
+        // 就只能重拆一次角度了
+        MaterialBlock(
+            materials = state.displayMaterials,
+            editing = false,
+            onText = { _, _ -> },
+            onSource = { _, _ -> },
+            onAdd = {},
+            onRemove = {},
+        )
+
         Spacer(Modifier.height(Spacing.xl))
 
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
@@ -472,6 +496,10 @@ private fun ExistingScript(
     onPhrase: (Int, Int, String) -> Unit,
     onAddPhrase: (Int) -> Unit,
     onRemovePhrase: (Int, Int) -> Unit,
+    onMaterialText: (Int, String) -> Unit,
+    onMaterialSource: (Int, String) -> Unit,
+    onAddMaterial: () -> Unit,
+    onRemoveMaterial: (Int) -> Unit,
     onPark: () -> Unit,
 ) {
     val sections = if (state.editing) state.draftSections else state.displaySections
@@ -545,6 +573,21 @@ private fun ExistingScript(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        Spacer(Modifier.height(Spacing.l))
+
+        // 手边的料。
+        //
+        // 位置在骨架之后：先看「按什么顺序讲」，再看「手边有什么」。
+        // 反过来会让人以为素材是正文，然后就照着念了
+        MaterialBlock(
+            materials = state.displayMaterials,
+            editing = state.editing,
+            onText = onMaterialText,
+            onSource = onMaterialSource,
+            onAdd = onAddMaterial,
+            onRemove = onRemoveMaterial,
+        )
 
         Spacer(Modifier.height(Spacing.l))
 
@@ -773,6 +816,212 @@ private fun SavedSectionCard(section: Section) {
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 手边的料。
+ *
+ * ## 为什么它不是「正文」
+ *
+ * 每条都是独立的短句，中间没有连接词，也**不成段**。
+ * 一旦成段，用户就会照着念——而「照着念就不练口语了」是这个 App 的前提。
+ * 素材的作用是让人开口时不空，不是替他把话说完。
+ *
+ * ## 为什么出处必须显示出来
+ *
+ * 数据、金句、引用只有在带出处时才被收下（见 MaterialKit）。
+ * 既然收下的都有出处，展示时就不能把它藏起来——
+ * 用户要能一眼看见「这句是谁说的」，才敢在镜头前引用它。
+ * 藏着出处，等于把「有据可查」变成「听我说」。
+ */
+@Composable
+private fun MaterialBlock(
+    materials: List<Material>,
+    editing: Boolean,
+    onText: (Int, String) -> Unit,
+    onSource: (Int, String) -> Unit,
+    onAdd: () -> Unit,
+    onRemove: (Int) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "手边的料",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.weight(1f))
+            if (materials.isNotEmpty()) {
+                Text(
+                    text = "${materials.size} 条",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "不成句，也不用念。讲的时候扫一眼，用自己的话接上去。",
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        // 编辑态必须把准入规则写出来。
+        //
+        // 数据 / 金句 / 引用一旦把出处删空，存的时候整条会被丢掉
+        // （见 MaterialKit.sanitize）。不提前说的话，用户看到的是
+        // 「我明明写了一条，存完就没了」——这种事说不清楚，也没法撤销。
+        if (editing) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = MaterialKit.RULE_HINT,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(Spacing.s))
+
+        if (materials.isEmpty() && !editing) {
+            // 空着就直说空着。编一句「暂无素材」毫无信息，
+            // 而这句话解释了为什么空：没把握的东西它不写
+            Text(
+                text = "这次没找到能给的材料。没把握出处的数据和引用，它不会写。",
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+
+        materials.forEachIndexed { index, m ->
+            if (editing) {
+                EditableMaterialRow(
+                    material = m,
+                    onText = { onText(index, it) },
+                    onSource = { onSource(index, it) },
+                    onRemove = { onRemove(index) },
+                )
+            } else {
+                MaterialRow(m)
+            }
+        }
+
+        if (editing) {
+            TextButton(onClick = onAdd) {
+                Text("＋ 加一条", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MaterialRow(m: Material) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            Modifier
+                .padding(top = 2.dp)
+                .clip(MaterialTheme.shapes.extraSmall)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                .padding(horizontal = 5.dp, vertical = 1.dp),
+        ) {
+            Text(
+                text = m.kind.label,
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(Spacing.s))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = m.text,
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            // 有出处才写。没出处就是没有——不替它补一个
+            if (m.hasSource) {
+                Text(
+                    text = "—— ${m.source}",
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditableMaterialRow(
+    material: Material,
+    onText: (String) -> Unit,
+    onSource: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(Modifier.padding(vertical = Spacing.xs)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 种类不给改：它决定了「要不要出处」。把例子改成金句却没有出处，
+            // 保存时这条会被准入规则丢掉——用户会看着刚写的东西凭空消失
+            Box(
+                Modifier
+                    .clip(MaterialTheme.shapes.extraSmall)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            ) {
+                Text(
+                    text = material.kind.label,
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onRemove, modifier = Modifier.size(26.dp)) {
+                Text("×", fontSize = 14.sp, color = MaterialTheme.colorScheme.outline)
+            }
+        }
+        EditField(
+            value = material.text,
+            onValueChange = onText,
+            placeholder = "一句话，别写成段",
+            style = TextStyle(
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+        )
+        if (material.kind.needsSource) {
+            EditField(
+                value = material.source,
+                onValueChange = onSource,
+                // 这一类没有出处就存不下来，得提前说清楚，
+                // 不然用户会以为自己写完就保存了
+                placeholder = "出处（这一类必须填，留空会被丢掉）",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            )
+        } else {
+            EditField(
+                value = material.source,
+                onValueChange = onSource,
+                placeholder = "出处（可以不填）",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+            )
         }
     }
 }

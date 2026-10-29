@@ -1,6 +1,7 @@
 package com.hatio.speakinspire
 
 import com.hatio.speakinspire.data.model.Paragraph
+import com.hatio.speakinspire.service.DraftStyle
 import com.hatio.speakinspire.ui.compose.ComposeUiState
 import com.hatio.speakinspire.ui.compose.RejectedInfo
 import org.junit.Assert.assertEquals
@@ -154,5 +155,68 @@ fun `切到纯文章视图时来源标注隐藏`() {
         // 如果之前有成文，新一轮被拒稿不该让用户丢掉已有的
         val s = state(paragraphs = listOf(Paragraph("旧内容", true)), rejected = RejectedInfo(200, 300))
         assertTrue("已有内容就该能存", s.canSave)
+    }
+
+    // ---------- 素材来源三个芯片 ----------
+
+    @Test
+    fun `三个芯片默认全勾`() {
+        // 产品说法是「综合记录、回答、发芽」。默认不勾，那句说法就是假的
+        val s = ComposeUiState()
+        assertTrue(s.includeNote)
+        assertTrue(s.includeDialogue)
+        assertTrue(s.includeSprouts)
+    }
+
+    @Test
+    fun `没有芽就不显示发芽芯片`() {
+        // 一个勾了却什么都没变的选项，会让人以为这功能坏了
+        assertFalse(ComposeUiState(sproutCount = 0).hasSprouts)
+        assertTrue(ComposeUiState(sproutCount = 2).hasSprouts)
+    }
+
+    @Test
+    fun `没答过问题就不显示追问芯片`() {
+        assertFalse(ComposeUiState(roundCount = 0).hasDialogue)
+        assertTrue(ComposeUiState(roundCount = 3).hasDialogue)
+    }
+
+    @Test
+    fun `发芽段不计进 AI 补的段落`() {
+        // 合并成一个数字会让用户以为文章里没有别人的话
+        val s = state(
+            paragraphs = listOf(
+                Paragraph("我说的", true),
+                Paragraph("AI 补的论证", false),
+                Paragraph("芽里的引用", mine = false, fromSprout = true),
+            )
+        )
+        assertEquals(1, s.mineCount)
+        assertEquals(1, s.aiCount)
+        assertEquals(1, s.sproutParaCount)
+    }
+
+    @Test
+    fun `刚写完不该提示重写`() {
+        assertFalse(ComposeUiState(styleRecorded = true).needsRecompose)
+    }
+
+    @Test
+    fun `换风格还没重写时 保存栏说的仍是正文那个风格`() {
+        // 真机验过：选随感、没点重写，上面写着「这篇还是按刚才的设置写的」，
+        // 下面却写着「按随感写的」——同一屏两句话互相打脸。
+        // 「按哪种写的」说的是正文，必须取正文那一版。
+        val s = ComposeUiState(
+            style = DraftStyle.ARGUMENT,
+            composedStyle = DraftStyle.SPOKEN,
+            needsRecompose = true,
+        )
+        assertEquals(DraftStyle.SPOKEN, s.writtenStyle)
+    }
+
+    @Test
+    fun `没有正文记录时退回当前风格`() {
+        // v5 之前的文章没记 styleId——这时只能说 chip 上那个
+        assertEquals(DraftStyle.CHECKLIST, ComposeUiState(style = DraftStyle.CHECKLIST).writtenStyle)
     }
 }

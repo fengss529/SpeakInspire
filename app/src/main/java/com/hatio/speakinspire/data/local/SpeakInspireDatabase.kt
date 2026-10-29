@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ProviderEntity::class,
         SproutEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class SpeakInspireDatabase : RoomDatabase() {
@@ -220,6 +220,105 @@ abstract class SpeakInspireDatabase : RoomDatabase() {
             }
         }
 
-        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        /**
+         * v4 → v5：选题加「手边的料」，文章加「按哪种风格写的」。
+         *
+         * ## 为什么重建表而不是 ALTER TABLE ADD COLUMN
+         *
+         * `ALTER TABLE ... ADD COLUMN x TEXT NOT NULL DEFAULT ''` 能做到，
+         * 但 Room 迁移后会逐列比对 schema，而 `@ColumnInfo` 没声明
+         * `defaultValue` 时实体侧的期望值是「无默认值」——
+         * 数据库里那个 `DEFAULT ''` 会让校验失败，
+         * 抛的是 `Migration didn't properly handle`，用户升级即崩溃。
+         *
+         * 让两边一致有两条路：给实体补 `@ColumnInfo(defaultValue=...)`
+         * （字符串默认值的引号写法在 Room 各版本里不一致，踩过的人不少），
+         * 或者照 v4 的老办法重建表。这里选后者——它在这个项目里
+         * 已经真机验证过一次，且不依赖任何注解细节。
+         *
+         * ## 旧数据补什么
+         *
+         * - `materialsJson` 补空数组 `[]`：老选题没有素材，不是「有但空」
+         * - `styleId` 补空串：那时候还没有风格这回事。
+         *   补成默认的「随感」等于替用户记错了一件事——
+         *   详情页会说「这是篇随感」，而它当时根本没按风格写
+         *
+         * ## 列与类型必须与实体逐字一致
+         *
+         * Boolean → INTEGER（`parked`、`edited`），Long → INTEGER。
+         * 少一个索引、把 INTEGER 写成 TEXT，启动时直接抛。
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // ① script：加 materialsJson（放在 sectionsJson 之后，与实体顺序一致）
+                db.execSQL(
+                    """
+                    CREATE TABLE script_new (
+                        id TEXT NOT NULL,
+                        sourceArticleId TEXT,
+                        sourceTitle TEXT NOT NULL,
+                        angle TEXT NOT NULL,
+                        rationale TEXT NOT NULL,
+                        sectionsJson TEXT NOT NULL,
+                        materialsJson TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        shotAt INTEGER,
+                        parked INTEGER NOT NULL,
+                        note TEXT NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO script_new
+                        (id, sourceArticleId, sourceTitle, angle, rationale,
+                         sectionsJson, materialsJson, createdAt, shotAt, parked, note)
+                    SELECT id, sourceArticleId, sourceTitle, angle, rationale,
+                           sectionsJson, '[]', createdAt, shotAt, parked, note
+                    FROM script
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE script")
+                db.execSQL("ALTER TABLE script_new RENAME TO script")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_script_sourceArticleId ON script(sourceArticleId)"
+                )
+
+                // ② article：加 styleId
+                db.execSQL(
+                    """
+                    CREATE TABLE article_new (
+                        id TEXT NOT NULL,
+                        sourceNoteId TEXT,
+                        sourceText TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        paragraphsJson TEXT NOT NULL,
+                        writtenAt INTEGER NOT NULL,
+                        edited INTEGER NOT NULL,
+                        styleId TEXT NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO article_new
+                        (id, sourceNoteId, sourceText, title, paragraphsJson,
+                         writtenAt, edited, styleId)
+                    SELECT id, sourceNoteId, sourceText, title, paragraphsJson,
+                           writtenAt, edited, ''
+                    FROM article
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE article")
+                db.execSQL("ALTER TABLE article_new RENAME TO article")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_article_sourceNoteId ON article(sourceNoteId)"
+                )
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
     }
 }

@@ -6,11 +6,15 @@ import com.hatio.speakinspire.data.model.Angle
 import com.hatio.speakinspire.data.model.ArticleDraft
 import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.Cue
+import com.hatio.speakinspire.data.model.Material
+import com.hatio.speakinspire.data.model.MaterialKind
 import com.hatio.speakinspire.data.model.Script
 import com.hatio.speakinspire.data.model.ScriptOutline
 import com.hatio.speakinspire.data.model.Section
+import com.hatio.speakinspire.data.model.Sprout
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.data.repository.IdeaRepository
+import com.hatio.speakinspire.domain.MaterialKit
 import com.hatio.speakinspire.domain.TopicState
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.ErrorKind
@@ -59,6 +63,15 @@ class TopicViewModel @Inject constructor(
             val existing = article
                 ?.let { a -> repo.topicsOfArticle(a.article.id).firstOrNull { !it.script.parked } }
 
+            // 这条文章的出处记录长过哪些芽。
+            //
+            // 带进骨架生成，是为了让素材区**优先复用**用户看过、认过的连接，
+            // 不够的部分才让模型新找。不带的话，同一个想法会长出两套
+            // 互不相干的素材：发芽里一套，选题里另一套。
+            val sprouts = article?.article?.sourceNoteId
+                ?.let { repo.sproutsOf(it) }
+                .orEmpty()
+
             _state.value = TopicUiState(
                 articleId = articleId,
                 articleTitle = article?.article?.title.orEmpty(),
@@ -66,6 +79,7 @@ class TopicViewModel @Inject constructor(
                 existingScript = existing?.script,
                 shotAt = existing?.script?.shotAt,
                 parked = existing?.state == TopicState.PARKED,
+                sprouts = sprouts,
             )
 
             // 还没有选题就去拆角度
@@ -144,6 +158,8 @@ class TopicViewModel @Inject constructor(
                         current.articleParagraphs.map { ChatMessage.user(it) },
                     ),
                     angle,
+                    // 已有的芽：素材优先复用它们
+                    current.sprouts,
                 )
             } catch (e: Exception) {
                 ScriptOutline(angle.title, emptyList())
@@ -181,6 +197,9 @@ class TopicViewModel @Inject constructor(
                     )
                 },
                 createdAt = System.currentTimeMillis(),
+                // 手边的料跟着骨架一起存。它是这一次生成的产物，
+                // 下次重新生成会是一批新的
+                materials = MaterialKit.sanitize(outline.materials),
             )
             repo.saveScript(script)
             // 存完立刻切到「已保存」视图：
@@ -251,6 +270,7 @@ class TopicViewModel @Inject constructor(
             editing = true,
             draftAngle = script.angle,
             draftSections = script.sections,
+            draftMaterials = script.materials,
         )
     }
 
@@ -259,6 +279,7 @@ class TopicViewModel @Inject constructor(
             editing = false,
             draftAngle = "",
             draftSections = emptyList(),
+            draftMaterials = emptyList(),
         )
     }
 
@@ -313,6 +334,58 @@ class TopicViewModel @Inject constructor(
         )
     }
 
+    // ---------- 素材的就地编辑 ----------
+    //
+    // 能改的只有**内容和出处**，种类不给改。
+    //
+    // 理由是种类决定了「要不要出处」：把一条「例子」改成「金句」，
+    // 而它没有出处，保存时它会被准入规则丢掉——用户会看着自己
+    // 刚写的一条凭空消失。要加金句/引用/数据，直接在正文里写，
+    // 或者重新生成一次。
+
+    fun updateMaterialText(index: Int, text: String) {
+        val list = _state.value.draftMaterials
+        if (index !in list.indices) return
+        _state.value = _state.value.copy(
+            draftMaterials = list.toMutableList().also {
+                it[index] = it[index].copy(text = text)
+            },
+        )
+    }
+
+    fun updateMaterialSource(index: Int, source: String) {
+        val list = _state.value.draftMaterials
+        if (index !in list.indices) return
+        _state.value = _state.value.copy(
+            draftMaterials = list.toMutableList().also {
+                it[index] = it[index].copy(source = source)
+            },
+        )
+    }
+
+    /**
+     * 加一条。
+     *
+     * 默认给「例子」——四类里只有它不要求出处。
+     * 新加的空行如果用金句，用户写完一条没填出处，保存时会被丢掉，
+     * 那是最让人困惑的一种失败。
+     */
+    fun addMaterial() {
+        val list = _state.value.draftMaterials
+        if (list.size >= MaterialKit.MAX) return
+        _state.value = _state.value.copy(
+            draftMaterials = list + Material(MaterialKind.EXAMPLE, "", ""),
+        )
+    }
+
+    fun removeMaterial(index: Int) {
+        val list = _state.value.draftMaterials
+        if (index !in list.indices) return
+        _state.value = _state.value.copy(
+            draftMaterials = list.filterIndexed { i, _ -> i != index },
+        )
+    }
+
     /**
      * 存回库里。
      *
@@ -333,6 +406,10 @@ class TopicViewModel @Inject constructor(
             // 角度名删空了就保留原来那个——它同时是卡片标题的兜底
             angle = current.draftAngle.trim().ifBlank { script.angle },
             sections = cleaned,
+            // 素材过一遍准入规则：空行去掉、超量的截掉。
+            // 已经落库的那些当初就过了这一关，但用户可能刚把
+            // 一条金句的出处删了——那条就该消失，而不是留在库里
+            materials = MaterialKit.tidy(current.draftMaterials),
         )
 
         viewModelScope.launch {
@@ -342,6 +419,7 @@ class TopicViewModel @Inject constructor(
                 editing = false,
                 draftAngle = "",
                 draftSections = emptyList(),
+                draftMaterials = emptyList(),
             )
         }
     }
@@ -385,6 +463,14 @@ data class TopicUiState(
     val editing: Boolean = false,
     val draftAngle: String = "",
     val draftSections: List<Section> = emptyList(),
+    val draftMaterials: List<Material> = emptyList(),
+    /**
+     * 这条文章所属的记录长过的芽。
+     *
+     * 只在**生成骨架**时用到：素材优先复用它们。
+     * 已经存过的选题不需要它——素材已经落库了。
+     */
+    val sprouts: List<Sprout> = emptyList(),
 ) {
     val hasExisting: Boolean get() = existingScript != null
 
@@ -395,6 +481,11 @@ data class TopicUiState(
                 Section(s.title, s.seconds, s.phrases, s.cues.map { Cue(it.icon, it.text) })
             }
             ?: emptyList()
+
+    /** 手边的料。编辑态读草稿，否则读已存的/刚生成的 */
+    val displayMaterials: List<Material>
+        get() = if (editing) draftMaterials
+        else existingScript?.materials ?: outline?.materials ?: emptyList()
 
     val displayAngle: String?
         get() = existingScript?.angle ?: chosenAngle?.title ?: outline?.angle

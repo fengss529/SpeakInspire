@@ -248,13 +248,14 @@ class IdeaRepositoryTest {
     private fun seedArticle(noteId: String) = ArticleEntity(
         id = "a_$noteId", sourceNoteId = noteId, sourceText = "正文$noteId", title = "文章",
         paragraphsJson = """[{"t":"我说的","m":true}]""",
-        writtenAt = t, edited = false,
+        writtenAt = t, edited = false, styleId = "",
     )
 
     private fun seedScript(articleId: String) = ScriptEntity(
         id = "s_$articleId", sourceArticleId = articleId, sourceTitle = "文章",
         angle = "挑衅", rationale = "",
-        sectionsJson = "[]", createdAt = t, shotAt = null, parked = false, note = "",
+        sectionsJson = "[]", materialsJson = "[]",
+        createdAt = t, shotAt = null, parked = false, note = "",
     )
 
     // ---------- 随手记 ----------

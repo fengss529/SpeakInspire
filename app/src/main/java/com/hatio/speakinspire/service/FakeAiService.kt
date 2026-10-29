@@ -33,6 +33,14 @@ class FakeAiService : AiService {
     /** 捕获到的全部请求。断言 prompt 内容靠它。 */
     val captured = mutableListOf<Captured>()
 
+    /**
+     * 最近一次生成骨架时带上的芽。
+     *
+     * 单独放一个字段而不是塞进 [Captured]：素材复用的是
+     * 「这次请求有没有把芽发过去」，它跟 prompt 文本无关。
+     */
+    var capturedSprouts: List<com.hatio.speakinspire.data.model.Sprout> = emptyList()
+
     data class Captured(
         val stage: Stage,
         val systemPrompt: String,
@@ -141,8 +149,12 @@ class FakeAiService : AiService {
     override suspend fun buildOutline(
         article: ArticleDraft,
         angle: Angle,
+        sprouts: List<com.hatio.speakinspire.data.model.Sprout>,
     ): ScriptOutline {
         captured += Captured(Stage.OUTLINE, OUTLINE_SYSTEM_PROMPT, null)
+        // 发芽也要记下来：素材区「优先复用已有的芽」这条
+        // 只能靠「请求里到底带没带」来断言
+        capturedSprouts = sprouts
         return outline ?: ScriptOutline(angle.title, emptyList())
     }
 

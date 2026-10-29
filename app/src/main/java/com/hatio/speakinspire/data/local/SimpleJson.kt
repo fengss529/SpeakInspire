@@ -1,6 +1,8 @@
 package com.hatio.speakinspire.data.local
 
 import com.hatio.speakinspire.data.model.Cue
+import com.hatio.speakinspire.data.model.Material
+import com.hatio.speakinspire.data.model.MaterialKind
 import com.hatio.speakinspire.data.model.Paragraph
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.model.Section
@@ -49,9 +51,16 @@ internal object SimpleJson {
 
     // ---------- 文章段落 ----------
 
+    /**
+     * 段落。
+     *
+     * 第三个字段 `s`（fromSprout）是 v5 加的。**解码必须容忍它不存在**——
+     * v5 之前的文章只有 `t` 和 `m`，读的时候按 false 补上即可。
+     * 少一个字段就把整段判成坏数据，会让老文章一片空白。
+     */
     fun encodeParagraphs(paras: List<Paragraph>): String =
         paras.joinToString(",", "[", "]") { p ->
-            """{"t":${quote(p.text)},"m":${p.mine}}"""
+            """{"t":${quote(p.text)},"m":${p.mine},"s":${p.fromSprout}}"""
         }
 
     fun decodeParagraphs(json: String): List<Paragraph> {
@@ -61,6 +70,32 @@ internal object SimpleJson {
             Paragraph(
                 text = extractField(obj, "t") ?: "",
                 mine = extractBool(obj, "m") ?: false,
+                fromSprout = extractBool(obj, "s") ?: false,
+            )
+            // 别人说的话永远不能标成你说的。存储层再兜一次，
+            // 免得某天有人从别的路径写进一个自相矛盾的组合
+        }.map { if (it.mine && it.fromSprout) it.copy(fromSprout = false) else it }
+    }
+
+    // ---------- 选题素材 ----------
+
+    fun encodeMaterials(list: List<Material>): String =
+        list.joinToString(",", "[", "]") { m ->
+            """{"k":${quote(m.kind.name)},"t":${quote(m.text)},"src":${quote(m.source)}}"""
+        }
+
+    fun decodeMaterials(json: String): List<Material> {
+        val body = json.trim().removePrefix("[").removeSuffix("]")
+        if (body.isBlank()) return emptyList()
+        return splitObjects(body).mapNotNull { obj ->
+            val text = extractField(obj, "t") ?: return@mapNotNull null
+            Material(
+                // 存的是枚举名；认不出来当例子，别整条扔
+                kind = runCatching {
+                    MaterialKind.valueOf(extractField(obj, "k").orEmpty())
+                }.getOrDefault(MaterialKind.EXAMPLE),
+                text = text,
+                source = extractField(obj, "src").orEmpty(),
             )
         }
     }

@@ -9,11 +9,13 @@ import com.hatio.speakinspire.data.export.MarkdownExporter
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
+import com.hatio.speakinspire.data.repository.DraftStyleStore
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.repository.ProviderRepository
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.ConnectionResult
+import com.hatio.speakinspire.service.DraftStyle
 import com.hatio.speakinspire.service.ProbeMethod
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -39,6 +41,8 @@ class SettingsViewModel @Inject constructor(
     private val repo: ProviderRepository,
     private val aiService: AiService,
     private val probeStore: ProbeMethodStore,
+    /** 成文风格。和追问方法一样是「一个预设 + 一段可改的文字 + 一条不可改的底线」 */
+    private val styleStore: DraftStyleStore,
     /** 导出要用整库快照。这里不叫 repo，是为了不和 ProviderRepository 撞名 */
     private val ideaRepo: IdeaRepository,
     @ApplicationContext private val context: Context,
@@ -66,6 +70,8 @@ class SettingsViewModel @Inject constructor(
                 probeMethod = probeStore.current(),
                 probeInstruction = probeStore.instructionOf(probeStore.current()),
                 probeInstructionCustomized = probeStore.isCustomized(probeStore.current()),
+                draftStyle = styleStore.current(),
+                draftStyleNote = styleStore.noteOf(),
             )
         }
     }
@@ -108,6 +114,35 @@ class SettingsViewModel @Inject constructor(
             probeInstructionCustomized = probeStore.isCustomized(method),
             // 存完给个明确回执。这个操作没有别的可见结果，
             // 不提示的话用户会怀疑到底存没存
+            saved = true,
+        )
+    }
+
+    // ---------- 成文风格 ----------
+
+    /**
+     * 换默认风格。立刻落盘，理由和追问方法一样：
+     * 换风格是无风险动作，不该为了试试另一种先点一次「保存」。
+     *
+     * 只影响**以后**写的新文章；已经存在库里的文章记着自己当时的风格，
+     * 不会因为这里改了而变。
+     */
+    fun selectDraftStyle(style: DraftStyle) {
+        styleStore.select(style)
+        _state.value = _state.value.copy(draftStyle = style)
+    }
+
+    /**
+     * 保存补充写作要求。传空白 = 清掉。
+     *
+     * 存的只是**附加**那一段：预设里的结构（观点文要有主张、
+     * 清单要可执行）仍然生效，禁区那几条也仍然生效。
+     * 用户真正想换结构，那是「去选另一种风格」的事。
+     */
+    fun saveDraftStyleNote(text: String) {
+        styleStore.saveNote(text)
+        _state.value = _state.value.copy(
+            draftStyleNote = styleStore.noteOf(),
             saved = true,
         )
     }
@@ -373,6 +408,10 @@ data class SettingsUiState(
     val probeInstruction: String = "",
     /** 当前方法是否被改过。界面据此显示「恢复默认」 */
     val probeInstructionCustomized: Boolean = false,
+    /** 成文默认风格 */
+    val draftStyle: DraftStyle = DraftStyle.DEFAULT,
+    /** 叠加在风格之上的补充要求。空串表示没写过 */
+    val draftStyleNote: String = "",
     /** 正在导出全部 */
     val exporting: Boolean = false,
     /** 失败/提示信息，用底部提示条显示。null = 没有要提示的 */

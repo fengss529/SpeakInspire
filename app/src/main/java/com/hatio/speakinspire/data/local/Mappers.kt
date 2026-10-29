@@ -60,6 +60,7 @@ fun ArticleEntity.toModel(): Article = Article(
     paragraphs = SimpleJson.decodeParagraphs(paragraphsJson),
     writtenAt = writtenAt,
     edited = edited,
+    styleId = styleId,
 )
 
 fun Article.toEntity(): ArticleEntity = ArticleEntity(
@@ -70,6 +71,7 @@ fun Article.toEntity(): ArticleEntity = ArticleEntity(
     paragraphsJson = SimpleJson.encodeParagraphs(paragraphs),
     writtenAt = writtenAt,
     edited = edited,
+    styleId = styleId,
 )
 
 fun ScriptEntity.toModel(): Script = Script(
@@ -82,6 +84,7 @@ fun ScriptEntity.toModel(): Script = Script(
     shotAt = shotAt,
     parked = parked,
     note = note,
+    materials = SimpleJson.decodeMaterials(materialsJson),
 )
 
 fun Script.toEntity(): ScriptEntity = ScriptEntity(
@@ -91,6 +94,7 @@ fun Script.toEntity(): ScriptEntity = ScriptEntity(
     angle = angle,
     rationale = "",
     sectionsJson = SimpleJson.encodeSections(sections),
+    materialsJson = SimpleJson.encodeMaterials(materials),
     createdAt = createdAt,
     shotAt = shotAt,
     parked = parked,

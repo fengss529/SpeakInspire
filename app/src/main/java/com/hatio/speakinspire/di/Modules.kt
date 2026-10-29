@@ -14,9 +14,11 @@ import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.remote.HttpTransport
 import com.hatio.speakinspire.data.remote.OkHttpTransport
 import com.hatio.speakinspire.data.remote.Providers
+import com.hatio.speakinspire.data.repository.DraftStyleStore
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.data.repository.ProbeMethodStore
 import com.hatio.speakinspire.data.repository.ProviderRepository
+import com.hatio.speakinspire.data.repository.SharedPrefsDraftStyleStore
 import com.hatio.speakinspire.data.repository.SharedPrefsProbeMethodStore
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.RealAiService
@@ -86,6 +88,15 @@ abstract class ProbeModule {
     @Binds
     @Singleton
     abstract fun bindProbeMethodStore(impl: SharedPrefsProbeMethodStore): ProbeMethodStore
+
+    /**
+     * 成文风格。抽接口的理由和追问方法一样：
+     * 让链路测试能在 JVM 里塞内存实现，
+     * 断言「设置里选了哪种风格 → 请求体里就是哪种」。
+     */
+    @Binds
+    @Singleton
+    abstract fun bindDraftStyleStore(impl: SharedPrefsDraftStyleStore): DraftStyleStore
 }
 
 /** 网络模块 */

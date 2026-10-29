@@ -4,6 +4,8 @@ import com.hatio.speakinspire.data.export.LibraryJson
 import com.hatio.speakinspire.data.model.Article
 import com.hatio.speakinspire.data.model.Cue
 import com.hatio.speakinspire.data.model.Deepening
+import com.hatio.speakinspire.data.model.Material
+import com.hatio.speakinspire.data.model.MaterialKind
 import com.hatio.speakinspire.data.model.Note
 import com.hatio.speakinspire.data.model.NoteSource
 import com.hatio.speakinspire.data.model.Paragraph
@@ -139,7 +141,10 @@ class LibraryJsonTest {
     @Test
     fun `文件头带 schemaVersion`() {
         val json = encoded()
-        assertTrue("没有 schemaVersion 就没法判断能不能读", "\"schemaVersion\":4" in json)
+        assertTrue(
+            "没有 schemaVersion 就没法判断能不能读",
+            "\"schemaVersion\":${LibraryJson.SCHEMA_VERSION}" in json,
+        )
     }
 
     @Test
@@ -155,8 +160,9 @@ class LibraryJsonTest {
         val dbVersion = Regex("""version\s*=\s*(\d+)""")
             .find(src)?.groupValues?.get(1)?.toInt()
         assertEquals(
-            "SpeakInspireDatabase 里的 version 改了吗",
-            4, dbVersion,
+            "两个版本号必须同步：迁了表结构却没提 schemaVersion，" +
+                "导入时就会用旧解析器读新结构",
+            LibraryJson.SCHEMA_VERSION, dbVersion,
         )
         assertEquals("数据库升版时这里也要跟着提", dbVersion, LibraryJson.SCHEMA_VERSION)
     }
@@ -262,7 +268,7 @@ class LibraryJsonTest {
         val broken = good.replaceFirst("\"id\":\"n1\"", "\"id\":\"\"")
         val decoded = LibraryJson.decode(broken)
         // 整体仍然解析成功（header 还在），坏的那条被跳过
-        assertEquals(4, decoded!!.schemaVersion)
+        assertEquals(LibraryJson.SCHEMA_VERSION, decoded!!.schemaVersion)
         assertEquals(0, decoded.notes.size)
         // 但文章和选题不在这条记录里，它们照常读出来
         assertEquals(1, decoded.articles.size)
@@ -294,5 +300,98 @@ class LibraryJsonTest {
         val countsBlock = json.substringAfter("\"counts\":").substringBefore("}")
         assertTrue("counts 里不能出现 notes 这个词", "\"notes\"" !in countsBlock)
         assertTrue("counts 里不能出现 articles 这个词", "\"articles\"" !in countsBlock)
+    }
+
+    // ---------- v5：素材与风格 ----------
+
+    /** 只用 v5 新增字段的一份小库 */
+    private fun v5Library() = Library(
+        notes = emptyList(),
+        articles = listOf(
+            ArticleView(
+                article = Article(
+                    id = "a_v5",
+                    sourceNoteId = null,
+                    title = "卡壳的那三秒",
+                    paragraphs = listOf(
+                        Paragraph("我提前准备过。", mine = true),
+                        Paragraph("熟练度错觉让人误以为准备好了。", mine = false),
+                        // 第三档：芽里别人的话
+                        Paragraph("海明威说过，勇气是压力下的优雅。", mine = false, fromSprout = true),
+                    ),
+                    writtenAt = t,
+                    styleId = "spoken",
+                ),
+            )
+        ),
+        topics = listOf(
+            TopicView(
+                Script(
+                    id = "s_v5",
+                    sourceArticleId = "a_v5",
+                    sourceTitle = "卡壳的那三秒",
+                    angle = "从卡壳讲起",
+                    sections = listOf(Section("开场", 8, listOf("我准备了两周"))),
+                    createdAt = t,
+                    materials = listOf(
+                        Material(MaterialKind.EXAMPLE, "上次跟客户吃饭也是", ""),
+                        Material(MaterialKind.QUOTE, "勇气是压力下的优雅", "海明威"),
+                    ),
+                )
+            )
+        ),
+    )
+
+    @Test
+    fun `素材能原样读回来`() {
+        val topic = LibraryJson.decode(LibraryJson.encode(v5Library(), "0.11.0", t))!!
+            .topics.single()
+        assertEquals(2, topic.materials.size)
+        assertEquals(MaterialKind.EXAMPLE, topic.materials[0].kind)
+        assertEquals("上次跟客户吃饭也是", topic.materials[0].text)
+        assertEquals("", topic.materials[0].source)
+        assertEquals("海明威", topic.materials[1].source)
+    }
+
+    @Test
+    fun `风格能原样读回来`() {
+        // 用户看到的「这是篇口播稿」和文件里写的必须是同一件事
+        val article = LibraryJson.decode(LibraryJson.encode(v5Library(), "0.11.0", t))!!
+            .articles.single()
+        assertEquals("spoken", article.styleId)
+    }
+
+    @Test
+    fun `来源三档都能原样读回来`() {
+        val a = LibraryJson.decode(LibraryJson.encode(v5Library(), "0.11.0", t))!!.articles.single()
+        assertEquals(3, a.paragraphs.size)
+        assertEquals("你说的", a.paragraphs[0].sourceLabel)
+        assertEquals("AI 补", a.paragraphs[1].sourceLabel)
+        assertEquals("AI 补 · 含他人观点", a.paragraphs[2].sourceLabel)
+    }
+
+    @Test
+    fun `v4 的文件里没有素材和风格也能读`() {
+        // 用户手机里可能躺着旧版本导出的文件。读的时候不能崩，
+        // 也不能编一个默认风格出来——那时候还没有风格这回事
+        val old = """
+            {
+              "schemaVersion": 4,
+              "articles": [
+                {"id":"a1","title":"旧文章","sourceNoteId":null,"sourceText":"",
+                 "paragraphs":[{"t":"我说的","m":true}],"writtenAt":1,"edited":false}
+              ],
+              "topics": [
+                {"id":"s1","sourceArticleId":"a1","sourceTitle":"旧文章","angle":"角度",
+                 "sections":[],"createdAt":1,"shotAt":null,"parked":false,"note":""}
+              ],
+              "notes": []
+            }
+        """.trimIndent()
+        val decoded = LibraryJson.decode(old)!!
+        assertEquals(4, decoded.schemaVersion)
+        assertEquals("", decoded.articles.single().styleId)
+        assertTrue(decoded.topics.single().materials.isEmpty())
+        assertEquals("旧段落一律不是发芽来的", false, decoded.articles.single().paragraphs[0].fromSprout)
     }
 }

@@ -10,9 +10,11 @@ import com.hatio.speakinspire.data.model.ComposeResult
 import com.hatio.speakinspire.data.model.Paragraph
 import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.remote.ErrorMapper
+import com.hatio.speakinspire.data.repository.DraftStyleStore
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.service.AiService
 import com.hatio.speakinspire.service.DeepeningContext
+import com.hatio.speakinspire.service.DraftStyle
 import com.hatio.speakinspire.service.ErrorKind
 import com.hatio.speakinspire.service.TransportException
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -43,6 +45,7 @@ import android.content.Context
 class ComposeViewModel @Inject constructor(
     private val repo: IdeaRepository,
     private val ai: AiService,
+    private val styleStore: DraftStyleStore,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -70,6 +73,8 @@ class ComposeViewModel @Inject constructor(
             // 文章和记录是两条独立资源，所以要分两次读。
             // 多一次查询换来的是：文章没了，记录仍然打得开。
             val article = repo.findArticleOfNote(noteId)?.article
+            val rounds = note.deepening?.rounds.orEmpty()
+            val sprouts = note.sprouts
             _state.value = ComposeUiState(
                 noteId = noteId,
                 // 文章 id 必须跟库里的一致。
@@ -87,6 +92,21 @@ class ComposeViewModel @Inject constructor(
                 alreadyComposed = article != null,
                 sourceMode = article?.edited == true,
                 originalNote = note.note.body,
+                roundCount = rounds.count { it.answered },
+                sproutCount = sprouts.size,
+                sproutTitles = sprouts.map { it.title },
+                // 已有文章时按它当时用的风格显示；
+                // 没有文章就按设置里的默认值
+                style = article?.styleId?.let { DraftStyle.byIdOrNull(it) } ?: styleStore.current(),
+                // 正文是库里那篇，风格就是它记的那个。没记过（v5 之前）留空，
+                // 界面据此不把默认风格冒充成「这篇的风格」
+                composedStyle = article?.styleId?.let { DraftStyle.byIdOrNull(it) },
+                styleRecorded = article?.styleId?.isNotBlank() == true,
+                styleInstruction = styleStore.noteOf(),
+                // 没有的素材不能勾。一个勾了却什么都没变的选项，
+                // 会让用户以为这功能坏了
+                includeDialogue = rounds.any { it.answered },
+                includeSprouts = sprouts.isNotEmpty(),
             )
             // 已有文章就不重复生成——那是用户的资产，不该被覆盖
             if (autoCompose && article == null) compose()
@@ -115,6 +135,10 @@ class ComposeViewModel @Inject constructor(
                 sourceMode = true,
                 // 原文快照：来源记录删了，这里仍然能回答「这段话从哪儿来」
                 originalNote = view.article.sourceText,
+                style = DraftStyle.byIdOrNull(view.article.styleId) ?: styleStore.current(),
+                composedStyle = DraftStyle.byIdOrNull(view.article.styleId),
+                styleRecorded = view.article.styleId.isNotBlank(),
+                styleInstruction = styleStore.noteOf(),
             )
         }
     }
@@ -142,6 +166,18 @@ class ComposeViewModel @Inject constructor(
                 rounds = rounds.toChatMessages(),
                 roundIndex = rounds.count { it.answered },
                 maxRounds = note.deepening?.estimatedRounds ?: 5,
+                // 三个开关和风格都在这里定死。
+                //
+                // 服务实现不读存储、不读界面——它只认这份上下文。
+                // 这样「界面勾了什么 / 设置里选了什么 → 请求里就是什么」
+                // 能被链路测试直接断言，不会出现「看起来换了风格，
+                // 发出去还是老提示词」这种事。
+                sprouts = note.sprouts,
+                includeNote = current.includeNote,
+                includeDialogue = current.includeDialogue,
+                includeSprouts = current.includeSprouts,
+                style = current.style,
+                styleInstruction = current.styleInstruction,
             )
 
             try {
@@ -151,9 +187,13 @@ class ComposeViewModel @Inject constructor(
                             loading = false,
                             title = result.title,
                             paragraphs = result.paragraphs.map {
-                                Paragraph(it.text, it.isMine)
+                                Paragraph(it.text, it.isMine, it.fromSprout)
                             },
                             rejected = null,
+                            needsRecompose = false,
+                            // 刚写出来的这篇，风格是确定的
+                            styleRecorded = true,
+                            composedStyle = current.style,
                         )
                     }
 
@@ -220,6 +260,9 @@ class ComposeViewModel @Inject constructor(
                     paragraphs = current.paragraphs,
                     writtenAt = System.currentTimeMillis(),
                     edited = true,
+                    // 记下这篇是按哪种风格写的。详情页那句「这是篇观点文」
+                    // 只可能从这儿来——正文里读不出来
+                    styleId = current.style.id,
                 )
             )
             _state.value = _state.value.copy(saved = true, alreadyComposed = true)
@@ -261,6 +304,56 @@ class ComposeViewModel @Inject constructor(
         _state.value = _state.value.copy(sourceMode = !_state.value.sourceMode)
     }
 
+    // ------------------------------------------------------------ 风格与素材开关
+
+    /**
+     * 换风格。
+     *
+     * **只对这一次生效，不写回设置。**
+     *
+     * 写回的话，用户想试一下「口播稿」看看什么样，回来时默认风格
+     * 已经被改了，下次写别的还留在口播上——而他根本没做这个决定。
+     * 设置页那个选择是「以后都这样」，这里是「这次想这么写」，
+     * 两个动作的心智不一样，不能共用一个存储。
+     */
+    fun selectStyle(style: DraftStyle) {
+        val s = _state.value
+        if (s.style == style) return
+        _state.value = s.copy(style = style).markStale()
+    }
+
+    /**
+     * 勾掉/勾上一块素材。
+     *
+     * 三个芯片默认全选，理由是「综合记录、回答、发芽」这个说法本身——
+     * 留开关是因为芽里混着别人的话，有人不希望它们进自己的文章。
+     *
+     * 不允许把三项全关：那时候模型手里什么都没有，
+     * 它只能凭空写一篇。留最后一项勾着，比让用户看到一篇凭空写的文章好。
+     */
+    fun toggleChip(chip: ComposeChip) {
+        val s = _state.value
+        val next = when (chip) {
+            ComposeChip.NOTE -> s.copy(includeNote = !s.includeNote)
+            ComposeChip.DIALOGUE -> s.copy(includeDialogue = !s.includeDialogue)
+            ComposeChip.SPROUTS -> s.copy(includeSprouts = !s.includeSprouts)
+        }
+        val noneLeft = !next.includeNote && !next.includeDialogue && !next.includeSprouts
+        if (noneLeft) return
+        _state.value = next.markStale()
+    }
+
+    /**
+     * 改过风格或勾选之后，已有正文就不再对应现在的设置了。
+     *
+     * 这里**不自动重新生成**：一次成文是一次真实调用，
+     * 用户点一下芯片就烧一次额度、等十几秒，那是很坏的体验。
+     * 只把「该重写了」标出来，按钮换成「按新的选择重写」，
+     * 决定权给他。
+     */
+    private fun ComposeUiState.markStale(): ComposeUiState =
+        if (hasContent) copy(needsRecompose = true) else this
+
     fun editTitle(v: String) {
         _state.value = _state.value.copy(title = v)
     }
@@ -300,14 +393,66 @@ data class ComposeUiState(
     /** true = 显示来源标注；false = 纯文章视图 */
     val sourceMode: Boolean = true,
     val saved: Boolean = false,
+    /** 这一篇写哪种风格。成文页的 chip 显示它，点开可以当次换掉 */
+    val style: DraftStyle = DraftStyle.DEFAULT,
+    /**
+     * 库里**确实记过**这篇的风格。
+     *
+     * v5 之前的文章 `styleId` 是空串，[style] 只能回落到设置里的默认值——
+     * 那个默认值是「以后怎么写」，不是「这篇当时怎么写」。
+     * 拿它去说「这是篇随感」就是编的，所以界面要看这个标记决定说不说。
+     */
+    val styleRecorded: Boolean = false,
+    /** 设置里那段补充写作要求。成文页只显示、不编辑（那是设置页的事） */
+    val styleInstruction: String = "",
+    /** 三个素材开关。默认全选 */
+    val includeNote: Boolean = true,
+    val includeDialogue: Boolean = true,
+    val includeSprouts: Boolean = true,
+    /** 这条记录答过的轮数。0 表示「追问」这个芯片不该出现 */
+    val roundCount: Int = 0,
+    /** 这条记录长过几颗芽。0 表示「发芽」这个芯片不该出现 */
+    val sproutCount: Int = 0,
+    val sproutTitles: List<String> = emptyList(),
+    /**
+     * 改过风格或勾选之后，正文和当前设置已经对不上了。
+     *
+     * 只标出来，不自动重写——一次成文是一次真实调用，
+     * 点一下芯片就烧一次额度、等十几秒，那是很坏的体验。
+     */
+    val needsRecompose: Boolean = false,
+    /**
+     * 正文这一版**实际**是用哪种风格写的。
+     *
+     * 和 [style] 不是一回事：改过风格 chip 但还没点重写时，[style] 已经是新的，
+     * 正文还是旧的。保存栏那句「按「X」写的」说的是**正文**，
+     * 拿 [style] 去说就会出现「上面写着这篇还是按刚才的设置写的，
+     * 下面写着按「随感」写的」这种自相矛盾的两句话。
+     *
+     * null 表示正文来历不明（v5 之前的文章没记 styleId）。
+     */
+    val composedStyle: DraftStyle? = null,
 ) {
+    /** 保存栏该说「按哪种写的」——说的是正文，不是 chip 上那个 */
+    val writtenStyle: DraftStyle get() = composedStyle ?: style
     val hasContent: Boolean get() = title.isNotBlank() && paragraphs.isNotEmpty()
 
     val mineCount: Int get() = paragraphs.count { it.mine }
-    val aiCount: Int get() = paragraphs.size - mineCount
+    /** 纯 AI 补的论证（不含来自芽的那些） */
+    val aiCount: Int get() = paragraphs.count { !it.mine && !it.fromSprout }
+    /** 用到芽里的说法/例子/引用的段落 */
+    val sproutParaCount: Int get() = paragraphs.count { it.fromSprout }
 
     val canSave: Boolean get() = hasContent && !loading
+
+    /** 追问芯片该不该出现 */
+    val hasDialogue: Boolean get() = roundCount > 0
+    /** 发芽芯片该不该出现 */
+    val hasSprouts: Boolean get() = sproutCount > 0
 }
+
+/** 成文页顶部那三个可勾的素材来源 */
+enum class ComposeChip { NOTE, DIALOGUE, SPROUTS }
 
 data class RejectedInfo(
     val actualChars: Int,

@@ -241,6 +241,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onThinking = { svm.updateThinking(it) },
                 onSelectProbeMethod = { svm.selectProbeMethod(it) },
                 onSaveProbeInstruction = { svm.saveProbeInstruction(it) },
+                // 成文风格：选哪种、额外加什么要求
+                onSelectDraftStyle = { svm.selectDraftStyle(it) },
+                onSaveDraftStyleNote = { svm.saveDraftStyleNote(it) },
                 onTest = { svm.testConnection() },
                 onSave = { svm.save() },
                 onSavedConsumed = { svm.consumeSavedFlag() },
@@ -362,6 +365,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onPhrase = { section, phrase, text -> tvm.updatePhrase(section, phrase, text) },
                 onAddPhrase = { tvm.addPhrase(it) },
                 onRemovePhrase = { section, phrase -> tvm.removePhrase(section, phrase) },
+                // 手边的料：内容和出处可改，种类不给改
+                onMaterialText = { index, text -> tvm.updateMaterialText(index, text) },
+                onMaterialSource = { index, text -> tvm.updateMaterialSource(index, text) },
+                onAddMaterial = { tvm.addMaterial() },
+                onRemoveMaterial = { tvm.removeMaterial(it) },
                 onSettings = openSettings,
             )
         }
@@ -413,6 +421,10 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onConvert = { route = Route.Convert(cstate.articleId) },
                 onShare = { cvm.shareArticle() },
                 onSettings = openSettings,
+                // 素材来源三个芯片。默认全选，勾掉之后标「该重写了」
+                onToggleChip = { cvm.toggleChip(it) },
+                // 风格只对这一篇生效，不写回设置
+                onSelectStyle = { cvm.selectStyle(it) },
             )
         }
 
@@ -443,6 +455,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onPhrase = { section, phrase, text -> tvm.updatePhrase(section, phrase, text) },
                 onAddPhrase = { tvm.addPhrase(it) },
                 onRemovePhrase = { section, phrase -> tvm.removePhrase(section, phrase) },
+                // 手边的料：内容和出处可改，种类不给改
+                onMaterialText = { index, text -> tvm.updateMaterialText(index, text) },
+                onMaterialSource = { index, text -> tvm.updateMaterialSource(index, text) },
+                onAddMaterial = { tvm.addMaterial() },
+                onRemoveMaterial = { tvm.removeMaterial(it) },
                 onSettings = openSettings,
             )
         }

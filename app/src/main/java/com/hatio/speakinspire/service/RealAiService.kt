@@ -11,11 +11,15 @@ import com.hatio.speakinspire.data.model.ChatMessage
 import com.hatio.speakinspire.data.model.ComposeResult
 import com.hatio.speakinspire.data.model.DraftParagraph
 import com.hatio.speakinspire.data.model.ErrorKindLite
+import com.hatio.speakinspire.data.model.Material
+import com.hatio.speakinspire.data.model.MaterialKind
 import com.hatio.speakinspire.data.model.OutlineSection
 import com.hatio.speakinspire.data.model.ProviderConfig
 import com.hatio.speakinspire.data.model.ScriptOutline
 import com.hatio.speakinspire.data.model.ShootingCue
+import com.hatio.speakinspire.data.model.Sprout
 import com.hatio.speakinspire.data.model.SproutSection
+import com.hatio.speakinspire.domain.MaterialKit
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.data.remote.HttpTransport
 import com.hatio.speakinspire.data.remote.RequestBuilder
@@ -107,9 +111,23 @@ class RealAiService(
     }
 
     /**
-     * 成文的消息序列：原始记录 + 所有问答，**最后一条必须是用户**。
+     * 成文的消息序列。
      *
-     * ## 为什么要把原始记录放回来
+     * ## 顺序：原始记录 → 已有问答 → 发芽 → 明确指令
+     *
+     * 最后一条必须是用户，理由见下方注释。
+     *
+     * ## 三个开关是用户的选择，不是优化
+     *
+     * 成文页顶部有三个可勾芯片（记录原文 / 追问 N 轮 / 发芽 N 颗），
+     * 默认全选。取消勾选意味着「这一段我不想让它进文章」——
+     * 尤其是发芽：里面装着别人的话，有人不愿意它们混进自己的东西里。
+     *
+     * 所以这里按开关拼，**不是**先全发再让模型忽略。
+     * 「我发过去了但它没采用」和「我根本没发」是两件事，
+     * 用户没法验证前者，但能验证后者。
+     *
+     * ## 为什么原始记录要放回来
      *
      * 之前只发 `context.rounds`。可用户最初那句随手记**根本不在 rounds 里**——
      * 那是 note 表的内容。于是模型只看到「问题 + 回答」，
@@ -134,12 +152,48 @@ class RealAiService(
      */
     private fun composeMessages(context: DeepeningContext): List<ChatMessage> = buildList {
         val note = context.originalNote.trim()
-        if (note.isNotEmpty()) {
+        // 三个都关掉等于让它凭空写。界面不许取消最后一项
+        // （见 ComposeViewModel.toggle），这里再兜一次：
+        // 宁可多发一点，也不要让模型在一片空白上编
+        val noneChosen = !context.includeNote &&
+            !context.includeDialogue &&
+            !context.includeSprouts
+
+        if (note.isNotEmpty() && (context.includeNote || noneChosen)) {
             add(ChatMessage.user("我随手记下的想法：\n$note"))
         }
-        addAll(context.rounds)
+        if (context.includeDialogue || noneChosen) {
+            addAll(context.rounds)
+        }
+        if (context.includeSprouts && context.sprouts.isNotEmpty()) {
+            add(ChatMessage.user(sproutBlock(context.sprouts)))
+        }
         if (lastOrNull()?.isUser != true) {
             add(ChatMessage.user("按上面的要求，把我说过的话整理成文章。只输出 JSON。"))
+        }
+    }
+
+    /**
+     * 发芽材料块。
+     *
+     * 把三样东西都摊开：他说过的种子、长出来的连接、出处。
+     * **出处必须一起发**——只给 insight 而藏掉 source，模型会把它
+     * 当成「用户可以自称观点」的东西，然后写成 isMine = true。
+     */
+    private fun sproutBlock(sprouts: List<Sprout>): String = buildString {
+        appendLine("【他自己长过的芽】")
+        appendLine("这些是他在 App 里看过、认可过的连接。里面混着别人的说法、例子、引用。")
+        appendLine("凡是用了这里面东西的段落：isMine = false，fromSprout = true。")
+        appendLine("原文没有出处的那几条，写进文章时也不许替它补一个出处。")
+        appendLine()
+        sprouts.forEachIndexed { index, sprout ->
+            appendLine("${index + 1}. ${sprout.title}")
+            sprout.sections.forEach { sec ->
+                if (sec.seed.isNotBlank()) appendLine("   你说的：${sec.seed.trim()}")
+                appendLine("   连接：${sec.insight.trim()}")
+                if (sec.hasSource) appendLine("   出处：${sec.source.trim()}")
+            }
+            appendLine()
         }
     }
 
@@ -164,7 +218,9 @@ class RealAiService(
         return try {
             val body = RequestBuilder.compose(
                 cfg,
-                Prompts.DRAFT_SYSTEM_PROMPT,
+                // 风格段可换，禁区不可换——结构在 Prompts.draftSystem 里保证，
+                // 这里只负责把用户的两种输入（选了哪种风格、补充要求）传进去
+                Prompts.draftSystem(context.style, context.styleInstruction),
                 composeMessages(context),
             )
             val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
@@ -205,10 +261,11 @@ class RealAiService(
         }
     }
 
-    /** 生成完整骨架：意群短语，不是逐字稿 */
+    /** 生成完整骨架 + 手边的料：意群短语，不是逐字稿 */
     override suspend fun buildOutline(
         article: ArticleDraft,
         angle: Angle,
+        sprouts: List<Sprout>,
     ): ScriptOutline {
         val cfg = configProvider()
         return try {
@@ -219,6 +276,8 @@ class RealAiService(
                 // 必须把文章一起发过去：骨架是从文章里拆出来的，
                 // 只给一个角度名，模型没有任何可拆的东西
                 buildArticleText(article),
+                // 已有的芽一起发：素材优先复用它，不够才新找
+                sprouts,
             )
             val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
             val content = ResponseParser.extractContent(raw)
@@ -392,7 +451,16 @@ class RealAiService(
         val paragraphs = splitObjects(parasRaw).mapNotNull { obj ->
             val text = extractField(obj, "text") ?: return@mapNotNull null
             val mine = extractField(obj, "isMine")?.trim() == "true"
-            DraftParagraph(text, isMine = mine)
+            val fromSprout = extractField(obj, "fromSprout")?.trim() == "true"
+            DraftParagraph(
+                text = text,
+                // 用了芽里的东西就一定是别人说的。
+                // 模型偶尔会两个都标 true（它把「我引用了别人」和
+                // 「这是我的观点」混成一句），这里强制纠正——
+                // 「别人说的话被标成你说的」是来源视图彻底失效的那种错
+                isMine = mine && !fromSprout,
+                fromSprout = fromSprout,
+            )
         }
         if (paragraphs.isEmpty()) {
             return ComposeResult.Failed(
@@ -433,7 +501,29 @@ class RealAiService(
                 cues = extractCues(obj),
             )
         }
-        return ScriptOutline(angleTitle, sections)
+
+        // 📌 素材必须过一遍准入规则，**不靠模型自觉**。
+        // 它太容易给出「某项研究显示 67% 的人……」这种听着很真的东西，
+        // 而用户会原样讲出去。没有出处的数据/金句/引用在这里就被丢掉，
+        // 宁可素材区只剩两条。
+        val materials = extractArrayField(trimmed, "materials")
+            ?.let { raw ->
+                splitObjects(raw).mapNotNull { obj ->
+                    val text = extractField(obj, "text")?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    Material(
+                        kind = MaterialKind.of(extractField(obj, "kind")),
+                        text = text,
+                        source = extractField(obj, "source").orEmpty(),
+                    )
+                }
+            }.orEmpty()
+
+        return ScriptOutline(
+            angle = angleTitle,
+            sections = sections,
+            materials = MaterialKit.sanitize(materials),
+        )
     }
 
     private fun extractCues(obj: String): List<ShootingCue> {

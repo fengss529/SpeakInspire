@@ -42,7 +42,7 @@ import com.hatio.speakinspire.domain.Library
 object LibraryJson {
 
     /** 与 [com.hatio.speakinspire.data.local.SpeakInspireDatabase] 的 version 同步 */
-    const val SCHEMA_VERSION = 4
+    const val SCHEMA_VERSION = 5
 
     const val FILE_NAME = "data.json"
 
@@ -114,6 +114,9 @@ object LibraryJson {
                 "title" to Json.text(a.article.title),
                 "writtenAt" to Json.number(a.article.writtenAt),
                 "edited" to Json.bool(a.article.edited),
+                // v5 新增。导出必须带上：用户看到的「这是篇观点文」
+                // 和文件里写的必须是同一件事
+                "styleId" to Json.text(a.article.styleId),
                 "paragraphs" to Json.raw(SimpleJson.encodeParagraphs(a.article.paragraphs)),
             )
         }
@@ -125,6 +128,9 @@ object LibraryJson {
                 "sourceTitle" to Json.text(t.script.sourceTitle),
                 "angle" to Json.text(t.script.angle),
                 "sections" to Json.raw(SimpleJson.encodeSections(t.script.sections)),
+                // 手边的料。少了它，导出去的选题就只剩骨架——
+                // 用户拿着 md 去拍，会发现「例子和数据都没了」
+                "materials" to Json.raw(SimpleJson.encodeMaterials(t.script.materials)),
                 "createdAt" to Json.number(t.script.createdAt),
                 "shotAt" to Json.numberOrNull(t.script.shotAt),
                 "parked" to Json.bool(t.script.parked),
@@ -246,6 +252,9 @@ object LibraryJson {
                 ?.let(SimpleJson::decodeParagraphs).orEmpty(),
             writtenAt = extractField(obj, "writtenAt")?.toLongOrNull() ?: 0L,
             edited = extractField(obj, "edited")?.toBooleanStrictOrNull() ?: false,
+            // 老文件（schemaVersion 4）没有这个字段。读不到就当「没记录过」，
+            // 而不是默认成随感——那会是一句编出来的话
+            styleId = extractField(obj, "styleId").orEmpty(),
         )
     }
 
@@ -263,6 +272,9 @@ object LibraryJson {
             shotAt = extractField(obj, "shotAt")?.toLongOrNull(),
             parked = extractField(obj, "parked")?.toBooleanStrictOrNull() ?: false,
             note = extractField(obj, "note").orEmpty(),
+            // 老文件没有 materials。空数组是正确语义：那批选题确实没有素材
+            materials = extractArrayField(obj, "materials")
+                ?.let(SimpleJson::decodeMaterials).orEmpty(),
         )
     }
 

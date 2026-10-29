@@ -1,6 +1,8 @@
 package com.hatio.speakinspire.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,19 +22,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Paragraph
+import com.hatio.speakinspire.service.DraftStyle
+import com.hatio.speakinspire.ui.compose.ComposeChip
 import com.hatio.speakinspire.ui.compose.ComposeUiState
 import com.hatio.speakinspire.ui.compose.RejectedInfo
 import com.hatio.speakinspire.ui.text.SelectableText
@@ -83,7 +95,26 @@ fun ComposeScreen(
     /** 把这一篇发出去（单条 md → 分享面板）。只在文章已存进库里时可用 */
     onShare: () -> Unit = {},
     onSettings: () -> Unit = {},
+    /** 勾掉/勾上一块素材来源 */
+    onToggleChip: (ComposeChip) -> Unit = {},
+    /** 这次换一种风格。只对当前这篇生效，不写回设置 */
+    onSelectStyle: (DraftStyle) -> Unit = {},
 ) {
+    // 风格选择弹窗的显隐。放在界面层是因为它没有跨页面状态：
+    // 关掉弹窗不需要记住任何东西，选中的结果直接回写到 ViewModel
+    var stylePickerOpen by remember { mutableStateOf(false) }
+
+    if (stylePickerOpen) {
+        StylePicker(
+            current = state.style,
+            onPick = {
+                onSelectStyle(it)
+                stylePickerOpen = false
+            },
+            onDismiss = { stylePickerOpen = false },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -132,21 +163,45 @@ fun ComposeScreen(
                 .padding(padding),
         ) {
             Box(Modifier.weight(1f)) {
-                when {
-                    state.loading -> CenterBox { LoadingBlock() }
-
-                    state.rejected != null -> CenterBox {
-                        RejectedBlock(state.rejected, onGoBackToDeepening)
+                Column(Modifier.fillMaxSize()) {
+                    // 素材来源与风格。
+                    //
+                    // **放在正文之前**，因为它在「还没成文」的时候就该看得见：
+                    // 用户需要先知道「这次会用哪几样东西写」，
+                    // 而不是等文章出来了再回头猜。
+                    if (!state.loading) {
+                        ComposeChips(
+                            state = state,
+                            onToggle = onToggleChip,
+                            onOpenStyle = { stylePickerOpen = true },
+                        )
                     }
+                    Box(Modifier.weight(1f)) {
+                        when {
+                            state.loading -> CenterBox { LoadingBlock() }
 
-                    state.errorMessage != null -> CenterBox {
-                        ErrorBlock(state.errorMessage, onRetry)
+                            state.rejected != null -> CenterBox {
+                                RejectedBlock(state.rejected, onGoBackToDeepening)
+                            }
+
+                            state.errorMessage != null -> CenterBox {
+                                ErrorBlock(state.errorMessage, onRetry)
+                            }
+
+                            state.hasContent -> ArticleBody(state)
+
+                            else -> CenterBox { NoContentBlock(onRetry) }
+                        }
                     }
-
-                    state.hasContent -> ArticleBody(state)
-
-                    else -> CenterBox { NoContentBlock(onRetry) }
                 }
+            }
+
+            // 改过风格或勾选之后，正文和设置对不上了。
+            //
+            // 只提示、不自动重写：一次成文是一次真实调用，
+            // 点一下芯片就烧一次额度、等十几秒，那不是点一下该有的代价
+            if (state.needsRecompose && state.hasContent && !state.loading) {
+                StaleBanner(onRecompose = onRetry)
             }
 
             if (state.hasContent && !state.loading) {
@@ -161,16 +216,196 @@ fun ComposeScreen(
                         onConvert = onConvert,
                         onReopenDeepening = onGoBackToDeepening,
                         showReopen = canReopenDeepening,
+                        styleLabel = if (state.styleRecorded) state.style.label else null,
                     )
                 } else {
                     SaveBar(
-                        showSourceNote = state.sourceMode && state.aiCount > 0,
+                        showSourceNote = state.sourceMode &&
+                            (state.aiCount > 0 || state.sproutParaCount > 0),
                         mineCount = state.mineCount,
                         aiCount = state.aiCount,
+                        sproutCount = state.sproutParaCount,
+                        // 说的是**正文**用的风格，不是 chip 上刚选的那个
+                        styleLabel = state.writtenStyle.label,
                         onSave = onSave,
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 这一行：用哪种风格写 + 拿哪几样东西写。
+ *
+ * ## 为什么风格和素材放在一起
+ *
+ * 它们回答的是同一个问题：「这篇会怎么写出来」。
+ * 分开摆会让用户以为风格是外观、素材是内容，其实两者都在
+ * 决定正文的样子。
+ *
+ * ## 为什么默认全勾
+ *
+ * 产品说法是「综合记录、回答、发芽」。默认不勾，那句说法就是假的。
+ * 留开关是因为芽里混着别人的话——有人不希望它们进自己的文章，
+ * 那是他的权利。
+ */
+@Composable
+private fun ComposeChips(
+    state: ComposeUiState,
+    onToggle: (ComposeChip) -> Unit,
+    onOpenStyle: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.l, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 风格：带一个下拉箭头，暗示「点开还有别的」
+        AssistChip(
+            onClick = onOpenStyle,
+            label = {
+                Text(
+                    text = "${state.style.label} ▾",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            },
+        )
+
+        if (state.hasDialogue) {
+            SourceChip(
+                label = "追问 ${state.roundCount} 轮",
+                checked = state.includeDialogue,
+                onClick = { onToggle(ComposeChip.DIALOGUE) },
+            )
+        }
+        if (state.hasSprouts) {
+            SourceChip(
+                label = "发芽 ${state.sproutCount} 颗",
+                checked = state.includeSprouts,
+                onClick = { onToggle(ComposeChip.SPROUTS) },
+            )
+        }
+        // 「记录原文」永远在。三个都取消等于让模型凭空写一篇，
+        // 所以 ViewModel 里也拦了「取消最后一项」这个动作
+        SourceChip(
+            label = "记录原文",
+            checked = state.includeNote,
+            onClick = { onToggle(ComposeChip.NOTE) },
+        )
+    }
+}
+
+@Composable
+private fun SourceChip(label: String, checked: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = checked,
+        onClick = onClick,
+        label = {
+            Text(
+                text = label,
+                fontSize = 12.sp,
+                color = if (checked) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.outline,
+            )
+        },
+    )
+}
+
+/**
+ * 风格选择。
+ *
+ * 每一行给「写出来是什么样」和「什么时候该用」，而不只是名字——
+ * 「观点文」三个字对不同的人意味着不同的东西，而 blurb 那句
+ * 是他真正用来判断的依据。
+ */
+@Composable
+private fun StylePicker(
+    current: DraftStyle,
+    onPick: (DraftStyle) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("这一篇怎么写", fontSize = 16.sp) },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                DraftStyle.entries.forEach { style ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable { onPick(style) }
+                            .padding(vertical = Spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = style == current,
+                            onClick = { onPick(style) },
+                        )
+                        Column(Modifier.padding(start = Spacing.xs)) {
+                            Text(
+                                text = style.label,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = style.blurb,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = "适合：${style.bestFor}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(Spacing.s))
+                // 说清「这次」和「默认」的区别，否则用户会以为设置页那个没用了
+                Text(
+                    text = "换只对现在这一篇生效，设置页里的默认风格不变。",
+                    fontSize = 10.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("不改了", fontSize = 13.sp) }
+        },
+    )
+}
+
+/** 风格/勾选换过之后，正文已经和当前设置对不上 */
+@Composable
+private fun StaleBanner(onRecompose: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f))
+            .padding(horizontal = Spacing.l, vertical = Spacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "这篇还是按刚才的设置写的。",
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onRecompose) {
+            Text("按新的重写", fontSize = 12.sp)
         }
     }
 }
@@ -227,6 +462,17 @@ private fun ArticleBody(state: ComposeUiState) {
 /**
  * 带来源标记的段落。
  *
+ * ## 三档，不是两档
+ *
+ * | 竖线 | 标签 | 是什么 |
+ * |---|---|---|
+ * | 实心紫 | 你说的 | 用户在记录或回答里说过的 |
+ * | 实心蓝 | AI 补 · 含他人观点 | 来自「发芽」——别人的说法、例子、引用 |
+ * | 浅暖色 | AI 补 | 为了文章通顺补的论证 |
+ *
+ * 第二档必须单独存在。芽里装的是别人的东西，混进「AI 补」会让用户
+ * 以为那只是通用论证，混进「你说的」就是造假。
+ *
  * 竖线的样式区分是**唯一**需要用户注意的视觉差异——
  * 太花哨会让人忽略内容本身。
  */
@@ -239,7 +485,7 @@ private fun MarkedParagraph(para: Paragraph, showSource: Boolean) {
             .fillMaxWidth()
             .height(IntrinsicSize.Min),
     ) {
-        // 左侧竖线：实心=你的话，浅色=AI 补
+        // 左侧竖线：实心=你的话，蓝色=他人的话，浅色=AI 补
         Box(
             Modifier
                 .width(3.dp)
@@ -249,6 +495,7 @@ private fun MarkedParagraph(para: Paragraph, showSource: Boolean) {
                     when {
                         !showSource -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                         para.mine -> StatusColors.mine
+                        para.fromSprout -> StatusColors.topic
                         else -> StatusColors.aiFill
                     },
                 ),
@@ -259,10 +506,13 @@ private fun MarkedParagraph(para: Paragraph, showSource: Boolean) {
         Column(Modifier.weight(1f)) {
             if (showSource) {
                 Text(
-                    text = if (para.mine) "你说的" else "AI 补",
+                    text = para.sourceLabel,
                     fontSize = 10.sp,
-                    color = if (para.mine) StatusColors.mine
-                    else MaterialTheme.colorScheme.outline,
+                    color = when {
+                        para.mine -> StatusColors.mine
+                        para.fromSprout -> StatusColors.topic
+                        else -> MaterialTheme.colorScheme.outline
+                    },
                 )
                 Spacer(Modifier.height(3.dp))
             }
@@ -285,6 +535,8 @@ private fun SaveBar(
     showSourceNote: Boolean,
     mineCount: Int,
     aiCount: Int,
+    sproutCount: Int,
+    styleLabel: String,
     onSave: () -> Unit,
 ) {
     Column(
@@ -296,8 +548,13 @@ private fun SaveBar(
     ) {
         if (showSourceNote) {
             Text(
-                text = "这篇里有 $mineCount 段是你说的，$aiCount 段是 AI 补的论证。" +
-                    "存下来会一直留在思考库里。",
+                text = buildString {
+                    append("这篇里有 $mineCount 段是你说的，$aiCount 段是 AI 补的论证")
+                    // 有芽的段落单独报一句。它们和「AI 补」不是一类东西，
+                    // 合并成一个数字会让用户以为文章里没有别人的话
+                    if (sproutCount > 0) append("，$sproutCount 段来自你长过的芽")
+                    append("。存下来会一直留在思考库里。")
+                },
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.outline,
@@ -309,7 +566,7 @@ private fun SaveBar(
         }
         Spacer(Modifier.height(Spacing.xs))
         Text(
-            text = "存完之后想转选题、想接着聊，都在下一个页面。",
+            text = "按「$styleLabel」写的。存完之后想转选题、想接着聊，都在下一个页面。",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.outline,
         )
@@ -344,6 +601,8 @@ private fun ArticleActions(
     onConvert: () -> Unit,
     onReopenDeepening: () -> Unit,
     showReopen: Boolean,
+    /** 库里记过风格才有值。没记过的老文章不硬说它是哪种 */
+    styleLabel: String? = null,
 ) {
     Column(
         Modifier
@@ -353,7 +612,8 @@ private fun ArticleActions(
             .padding(Spacing.l),
     ) {
         Text(
-            text = "已经存在思考库里了。",
+            text = if (styleLabel != null) "这是篇$styleLabel，已经在思考库里了。"
+            else "已经存在思考库里了。",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.outline,
         )

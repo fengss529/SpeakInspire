@@ -62,6 +62,13 @@ data class DraftParagraph(
     val text: String,
     /** true = 用户在追问里说过的；false = 成文阶段 AI 补充的论证 */
     val isMine: Boolean,
+    /**
+     * 这段用到了「发芽」里的连接 / 例子 / 引用。
+     *
+     * 一旦为 true，[isMine] 必须是 false —— 别人说的话不能标成你说的。
+     * 这条不靠模型自觉：解析时在这里强制一次（见 `RealAiService.parseCompose`）。
+     */
+    val fromSprout: Boolean = false,
 )
 
 /** 一个拍摄角度。同一篇文章可派生多个。 */
@@ -76,6 +83,12 @@ data class Angle(
 data class ScriptOutline(
     val angle: String,
     val sections: List<OutlineSection>,
+    /**
+     * 手边的料。**和骨架同一次请求产出**——
+     * 少一次等待、少一次点击，而且模型手里已经有文章全文，
+     * 这时候找例子比单开一次请求更准。
+     */
+    val materials: List<Material> = emptyList(),
 ) {
     val totalSeconds: Int get() = sections.sumOf { it.seconds }
 }

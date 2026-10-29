@@ -85,7 +85,10 @@ class MigrationV3ToV4Test {
         raw.close()
 
         room = Room.databaseBuilder(context, SpeakInspireDatabase::class.java, dbName)
-            .addMigrations(SpeakInspireDatabase.MIGRATION_3_4)
+            // 走**完整**迁移链而不是只挂 3→4：
+            // 数据库现在是 v5，只挂一段的话 Room 会直接报
+            // 「找不到 4→5 的迁移」。顺带也让这个测试覆盖了 4→5
+            .addMigrations(*SpeakInspireDatabase.ALL_MIGRATIONS)
             .allowMainThreadQueries()
             .build()
         // 触发迁移：Room 在 onUpgrade 之后会 validateMigration，schema 不一致直接抛

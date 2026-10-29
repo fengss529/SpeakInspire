@@ -160,7 +160,20 @@ class PromptBoundaryTest {
     @Test
     fun `成文 prompt 不再设 300 字统一门槛`() {
         val p = Prompts.DRAFT_SYSTEM_PROMPT
-        assertFalse("不能重新写死 300 字门槛", p.contains("300"))
+        // 原来断言的是「不含 300 这三个字符」。V0.11 加了成文风格之后
+        // 这条判据过宽了：某种风格的篇幅区间（「300-500 字」）里
+        // 本来就会出现 300，而那不是门槛。
+        //
+        // 真正要守的是**门槛只有一个**，就是 ThinMaterial，
+        // 所以改成盯住「少于 300」「不足 300」这种门槛说法
+        assertFalse(
+            "不能重新写死 300 字门槛",
+            p.contains("少于 300") || p.contains("不足 300") || p.contains("不满 300"),
+        )
+        assertTrue(
+            "门槛只能是 ThinMaterial 那一个数",
+            p.contains("不足 ${ThinMaterial.THRESHOLD} 字"),
+        )
         assertTrue("必须说明长度跟着素材走", p.contains("跟着素材走"))
     }
 
