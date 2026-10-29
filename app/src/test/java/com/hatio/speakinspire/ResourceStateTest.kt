@@ -13,12 +13,10 @@ import com.hatio.speakinspire.data.model.Round
 import com.hatio.speakinspire.data.model.Script
 import com.hatio.speakinspire.data.model.Section
 import com.hatio.speakinspire.domain.ArticleView
-import com.hatio.speakinspire.domain.GestureJudge
 import com.hatio.speakinspire.domain.LibraryOrder
 import com.hatio.speakinspire.domain.NoteState
 import com.hatio.speakinspire.domain.NoteView
 import com.hatio.speakinspire.domain.Streak
-import com.hatio.speakinspire.domain.SwipeAction
 import com.hatio.speakinspire.domain.TopicState
 import com.hatio.speakinspire.domain.TopicView
 import org.junit.Assert.assertEquals
@@ -299,47 +297,6 @@ class StreakTest {
     @Test
     fun `很久没记就是 0 天`() {
         assertEquals(0, Streak.days(listOf(day(2026, 9, 1)), now(2026, 10, 28)))
-    }
-}
-
-/** 手势判定测试 */
-class GestureJudgeTest {
-
-    @Test
-    fun `右滑标记已拍摄`() {
-        assertEquals(SwipeAction.MARK_SHOT, GestureJudge.judge(120f, 10f))
-    }
-
-    @Test
-    fun `左滑移回思考库`() {
-        assertEquals(SwipeAction.PARK, GestureJudge.judge(-120f, 10f))
-    }
-
-    @Test
-    fun `位移不足不触发`() {
-        assertEquals(SwipeAction.NONE, GestureJudge.judge(30f, 0f))
-    }
-
-    @Test
-    fun `纵向为主判为滚动`() {
-        assertEquals(SwipeAction.NONE, GestureJudge.judge(60f, 150f))
-    }
-
-    @Test
-    fun `太斜的手势不作为有效滑动`() {
-        // dx=70 dy=60 → 角度约 40 度，超过 22 度阈值
-        assertEquals(SwipeAction.NONE, GestureJudge.judge(70f, 60f))
-    }
-
-    @Test
-    fun `接近水平的滑动有效`() {
-        // dx=60 dy=5 → 角度约 4.8 度
-        assertEquals(SwipeAction.MARK_SHOT, GestureJudge.judge(60f, 5f))
-    }
-
-    @Test
-    fun `零位移不触发`() {
-        assertEquals(SwipeAction.NONE, GestureJudge.judge(0f, 0f))
     }
 }
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -165,11 +166,6 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
 
     val state by vm.uiState.collectAsStateWithLifecycle()
 
-    // 显式声明类型：嵌套 lambda 会让推断失败
-    val markShotHandler: (String, () -> Unit) -> Unit = { id, onOk ->
-        vm.markShot(id) { onOk() }
-    }
-
     // 从任意页进设置。传当前 route 当来源，返回才能回到原处
     val openSettings: () -> Unit = { route = Route.Settings(route) }
 
@@ -206,9 +202,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                         topics = state.topic,
                         // 点开的是这个选题自己的骨架，不是再跟 AI 聊一轮
                         onOpen = { id -> route = Route.Topic(id) },
-                        onMarkShot = markShotHandler,
+                        // 滑动删掉之后，搁置和删除都退到 ⋮ 菜单里。
+                        // 「标记已拍摄」不在列表上——它要先把骨架看清楚再点
                         onPark = { vm.park(it) },
-                        onUndoShot = { vm.undoShot(it) },
                         onUnpark = { vm.unpark(it) },
                         onSettings = openSettings,
                         onDelete = { vm.moveTopicToTrash(it) },
@@ -216,6 +212,9 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                     MainTab.STAT -> StatScreen(
                         stats = state.stats,
                         pendingCount = state.pendingCount,
+                        // 日历要的是「每天记了几条」，不是三个总数，
+                        // 所以在 ViewModel 里按天聚合好再传下来
+                        log = state.dayLog,
                         onSettings = openSettings,
                     )
                 }
@@ -270,6 +269,11 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
             val nvm: NoteDetailViewModel = hiltViewModel(key = "detail_${r.noteId}")
             val nstate by nvm.state.collectAsStateWithLifecycle()
             LaunchedEffect(r.noteId) { nvm.load(r.noteId) }
+            // 自动保存有 600ms 防抖。这半秒里退出页面，
+            // 刚打的字还在内存里 —— 离开时必须立刻落盘
+            DisposableEffect(r.noteId) {
+                onDispose { nvm.flushPending() }
+            }
             NoteDetailScreen(
                 title = nstate.title,
                 body = nstate.body,
@@ -280,8 +284,13 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 sproutLabel = nstate.sproutLabel,
                 latestSproutTitle = nstate.latestSproutTitle,
                 exportMessage = nstate.exportMessage,
+                saveError = nstate.saveError,
+                articleOutdated = nstate.articleOutdated,
+                // 点哪改哪：三个入口各自带出去，没有「编辑态」
+                onTitleChange = { nvm.editTitle(it) },
+                onBodyChange = { nvm.editBody(it) },
+                onAnswerChange = { index, text -> nvm.editAnswer(index, text) },
                 onBack = { route = r.parent ?: Route.Home },
-                onEdit = { route = Route.Edit(r.noteId) },
                 onDeepen = { route = Route.Deepening(r.noteId) },
                 onSprout = { route = Route.Sprout(r.noteId) },
                 // 文章 id 来自详情页状态，不在这里拼——
@@ -289,9 +298,13 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onViewArticle = {
                     nstate.articleId?.let { route = Route.Article(it) }
                 },
+                // 重新成文走同一条路：文章 id 是确定性的（a_$noteId），
+                // 存下去就是替换那一篇
+                onRecompose = { route = Route.Compose(r.noteId) },
                 onSettings = openSettings,
                 onShare = { nvm.shareNote() },
                 onDismissMessage = { nvm.consumeExportMessage() },
+                onDismissSaveError = { nvm.dismissSaveError() },
             )
         }
 
@@ -338,6 +351,18 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onMarkShot = { tvm.markShot() },
                 onUndoShot = { tvm.undoShot() },
                 onPark = { tvm.park() },
+                onUnpark = { tvm.unpark() },
+                // 骨架的就地编辑：能改角度名、段标题、意群短语，
+                // 时长和镜头提示只读（改数字对实际拍摄没有作用）
+                onEnterEdit = { tvm.enterEdit() },
+                onCancelEdit = { tvm.cancelEdit() },
+                onSaveEdit = { tvm.saveEdit() },
+                onDraftAngle = { tvm.updateDraftAngle(it) },
+                onSectionTitle = { index, text -> tvm.updateSectionTitle(index, text) },
+                onPhrase = { section, phrase, text -> tvm.updatePhrase(section, phrase, text) },
+                onAddPhrase = { tvm.addPhrase(it) },
+                onRemovePhrase = { section, phrase -> tvm.removePhrase(section, phrase) },
+                onSettings = openSettings,
             )
         }
 
@@ -407,6 +432,18 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onMarkShot = { tvm.markShot() },
                 onUndoShot = { tvm.undoShot() },
                 onPark = { tvm.park() },
+                onUnpark = { tvm.unpark() },
+                // 骨架的就地编辑：能改角度名、段标题、意群短语，
+                // 时长和镜头提示只读（改数字对实际拍摄没有作用）
+                onEnterEdit = { tvm.enterEdit() },
+                onCancelEdit = { tvm.cancelEdit() },
+                onSaveEdit = { tvm.saveEdit() },
+                onDraftAngle = { tvm.updateDraftAngle(it) },
+                onSectionTitle = { index, text -> tvm.updateSectionTitle(index, text) },
+                onPhrase = { section, phrase, text -> tvm.updatePhrase(section, phrase, text) },
+                onAddPhrase = { tvm.addPhrase(it) },
+                onRemovePhrase = { section, phrase -> tvm.removePhrase(section, phrase) },
+                onSettings = openSettings,
             )
         }
 

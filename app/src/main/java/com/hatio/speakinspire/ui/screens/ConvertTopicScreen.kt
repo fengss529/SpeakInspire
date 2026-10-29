@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +32,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -38,11 +41,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hatio.speakinspire.data.model.Angle
 import com.hatio.speakinspire.data.model.Section
+import com.hatio.speakinspire.ui.components.EditField
 import com.hatio.speakinspire.ui.theme.Spacing
 import com.hatio.speakinspire.ui.theme.StatusColors
 import com.hatio.speakinspire.ui.topic.TopicStep
@@ -74,6 +79,16 @@ fun ConvertTopicScreen(
     onMarkShot: () -> Unit,
     onUndoShot: () -> Unit,
     onPark: () -> Unit,
+    onUnpark: () -> Unit = {},
+    onEnterEdit: () -> Unit = {},
+    onCancelEdit: () -> Unit = {},
+    onSaveEdit: () -> Unit = {},
+    onDraftAngle: (String) -> Unit = {},
+    onSectionTitle: (Int, String) -> Unit = { _, _ -> },
+    onPhrase: (Int, Int, String) -> Unit = { _, _, _ -> },
+    onAddPhrase: (Int) -> Unit = {},
+    onRemovePhrase: (Int, Int) -> Unit = { _, _ -> },
+    onSettings: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -83,16 +98,39 @@ fun ConvertTopicScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(
-                        onClick = { if (state.step == TopicStep.OUTLINE) onBackToAngles() else onBack() },
+                        onClick = {
+                            // 返回键退的是「最里面那一层」：
+                            // 编辑态先退出编辑（草稿在不确认时丢掉，
+                            // 所以要有这一步拦住，别直接离页）
+                            when {
+                                state.editing -> onCancelEdit()
+                                state.step == TopicStep.OUTLINE -> onBackToAngles()
+                                else -> onBack()
+                            }
+                        },
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 title = {
+                    // 已有一条选题时，这一页就是「拍摄骨架」。
+                    // 曾经只看 step 判断，于是从选题 tab 点进来会显示
+                    // 「从哪讲起」——而这一页根本没有让你挑角度的地方
                     Text(
-                        text = if (state.step == TopicStep.ANGLES) "从哪讲起" else "拍摄骨架",
+                        text = when {
+                            state.editing -> "编辑骨架"
+                            state.hasExisting -> "拍摄骨架"
+                            state.step == TopicStep.ANGLES -> "从哪讲起"
+                            else -> "拍摄骨架"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                     )
+                },
+                actions = {
+                    // 设置入口全局化：任何一页都能进，返回回到原处
+                    IconButton(onClick = onSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -111,6 +149,16 @@ fun ConvertTopicScreen(
                     ExistingScript(
                         state = state,
                         onMarkShot = onMarkShot,
+                        onUndoShot = onUndoShot,
+                        onUnpark = onUnpark,
+                        onEnterEdit = onEnterEdit,
+                        onCancelEdit = onCancelEdit,
+                        onSaveEdit = onSaveEdit,
+                        onDraftAngle = onDraftAngle,
+                        onSectionTitle = onSectionTitle,
+                        onPhrase = onPhrase,
+                        onAddPhrase = onAddPhrase,
+                        onRemovePhrase = onRemovePhrase,
                         onPark = {
                             onPark()
                             scope.launch {
@@ -119,7 +167,7 @@ fun ConvertTopicScreen(
                                     actionLabel = "撤销",
                                     duration = SnackbarDuration.Short,
                                 )
-                                if (r == SnackbarResult.ActionPerformed) onUndoShot()
+                                if (r == SnackbarResult.ActionPerformed) onUnpark()
                             }
                         },
                     )
@@ -400,15 +448,35 @@ private fun OutlineSectionCard(section: com.hatio.speakinspire.data.model.Outlin
 /**
  * 已保存的选题。
  *
- * 核心是「我拍好了」这个标记 —— **不是打开相机**。
- * 用户在别的 app 拍完，回来点一下。
+ * 核心是「标记为已拍摄」这个动作 —— **不是打开相机**。
+ * 用户在别的 app 拍完，回来点一下。所以这里没有取景框、
+ * 没有录制按钮、没有「拍摄中」的中间态：那些会让用户
+ * 以为要在这个 App 里拍完，那这个标记就永远没人点。
+ *
+ * ## 为什么「编辑」在这里而不是列表里
+ *
+ * 骨架是一份要照着讲的东西，改它得先看清楚整段。
+ * 在列表上给个编辑入口，用户得在看不见内容的情况下进编辑态。
  */
 @Composable
 private fun ExistingScript(
     state: TopicUiState,
     onMarkShot: () -> Unit,
+    onUndoShot: () -> Unit,
+    onUnpark: () -> Unit,
+    onEnterEdit: () -> Unit,
+    onCancelEdit: () -> Unit,
+    onSaveEdit: () -> Unit,
+    onDraftAngle: (String) -> Unit,
+    onSectionTitle: (Int, String) -> Unit,
+    onPhrase: (Int, Int, String) -> Unit,
+    onAddPhrase: (Int) -> Unit,
+    onRemovePhrase: (Int, Int) -> Unit,
     onPark: () -> Unit,
 ) {
+    val sections = if (state.editing) state.draftSections else state.displaySections
+    val seconds = sections.sumOf { it.seconds }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -417,75 +485,232 @@ private fun ExistingScript(
     ) {
         Spacer(Modifier.height(Spacing.m))
 
-        state.displayAngle?.let {
+        if (state.editing) {
             Text(
-                text = it,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = "角度",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
             )
+            Spacer(Modifier.height(2.dp))
+            EditField(
+                value = state.draftAngle,
+                onValueChange = onDraftAngle,
+                placeholder = "这个角度一句话说清",
+                style = TextStyle(
+                    fontSize = 18.sp,
+                    lineHeight = 26.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+            )
+            Spacer(Modifier.height(Spacing.xs))
+            Text(
+                text = "改这一句，卡片标题也会跟着变。",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        } else {
+            state.displayAngle?.let {
+                Text(
+                    text = it,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
 
         Spacer(Modifier.height(Spacing.l))
 
-        state.displaySections.forEach { section ->
-            SavedSectionCard(section)
+        sections.forEachIndexed { index, section ->
+            if (state.editing) {
+                EditableSectionCard(
+                    section = section,
+                    index = index,
+                    onTitle = { onSectionTitle(index, it) },
+                    onPhrase = { phraseIndex, text -> onPhrase(index, phraseIndex, text) },
+                    onAddPhrase = { onAddPhrase(index) },
+                    onRemovePhrase = { phraseIndex -> onRemovePhrase(index, phraseIndex) },
+                )
+            } else {
+                SavedSectionCard(section)
+            }
             Spacer(Modifier.height(Spacing.m))
         }
 
-        if (state.displaySections.isNotEmpty()) {
+        if (sections.isNotEmpty()) {
             Text(
-                text = "共 ${state.displaySections.size} 段 · 大约 ${state.totalSeconds} 秒",
+                text = "共 ${sections.size} 段 · 大约 $seconds 秒",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        Spacer(Modifier.height(Spacing.xl))
-
-        // 已拍摄状态
-        if (state.isShot) {
-            ShotDoneBlock()
-        } else {
-            // 措辞很重要：「我拍好了」而不是「开始拍摄」
-            // 前者承认拍摄发生在别处，后者会让人以为要在这个 App 里拍
-            Button(
-                onClick = onMarkShot,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("我拍好了")
-            }
-            Spacer(Modifier.height(Spacing.xs))
-            Text(
-                text = "用相机或其他 app 拍完，回来点一下就行。",
-                fontSize = 11.sp,
-                lineHeight = 17.sp,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
-
         Spacer(Modifier.height(Spacing.l))
 
-        // 左滑的等价操作：先留着
-        if (!state.parked) {
-            OutlinedButton(
-                onClick = onPark,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("这个角度先不拍")
+        if (state.editing) {
+            Button(onClick = onSaveEdit, modifier = Modifier.fillMaxWidth()) {
+                Text("存好")
             }
             Spacer(Modifier.height(Spacing.xs))
-            Text(
-                text = "文章会留着，选题只是移回思考库。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.outline,
-            )
+            TextButton(onClick = onCancelEdit, modifier = Modifier.fillMaxWidth()) {
+                Text("不改了", fontSize = 13.sp)
+            }
+        } else {
+            if (state.isShot) {
+                ShotDoneBlock(onUndo = onUndoShot)
+            } else {
+                // 措辞很重要：承认拍摄发生在别处。
+                // 写「开始拍摄」会让人以为要在这个 App 里拍
+                Button(
+                    onClick = onMarkShot,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("标记为已拍摄")
+                }
+                Spacer(Modifier.height(Spacing.xs))
+                Text(
+                    text = "用相机或其他 app 拍完，回来点一下就行。",
+                    fontSize = 11.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+
+            Spacer(Modifier.height(Spacing.m))
+
+            OutlinedButton(onClick = onEnterEdit, modifier = Modifier.fillMaxWidth()) {
+                Text("编辑骨架")
+            }
+
+            Spacer(Modifier.height(Spacing.m))
+
+            if (state.parked) {
+                OutlinedButton(onClick = onUnpark, modifier = Modifier.fillMaxWidth()) {
+                    Text("取消搁置")
+                }
+            } else {
+                OutlinedButton(onClick = onPark, modifier = Modifier.fillMaxWidth()) {
+                    Text("这个角度先不拍")
+                }
+                Spacer(Modifier.height(Spacing.xs))
+                Text(
+                    text = "文章会留着，选题只是移回思考库。",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
         }
 
         Spacer(Modifier.height(Spacing.xxl))
     }
 }
 
+/**
+ * 可编辑的一段骨架。
+ *
+ * 时长不显示成输入框而是灰字：它不是可改的东西（改了也不影响实际节奏），
+ * 但得在里面——用户需要知道这一段大概讲多久。
+ * 镜头提示同理，改成纯展示。
+ */
+@Composable
+private fun EditableSectionCard(
+    section: Section,
+    index: Int,
+    onTitle: (String) -> Unit,
+    onPhrase: (Int, String) -> Unit,
+    onAddPhrase: () -> Unit,
+    onRemovePhrase: (Int) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .padding(Spacing.m),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "第 ${index + 1} 段",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "${section.seconds} 秒",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+
+        EditField(
+            value = section.title,
+            onValueChange = onTitle,
+            placeholder = "这一段叫什么",
+            style = TextStyle(
+                fontSize = 14.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+        )
+
+        Spacer(Modifier.height(Spacing.s))
+
+        section.phrases.forEachIndexed { phraseIndex, phrase ->
+            Row(
+                Modifier.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+                Spacer(Modifier.width(Spacing.s))
+                EditField(
+                    value = phrase,
+                    onValueChange = { onPhrase(phraseIndex, it) },
+                    placeholder = "一句半截的话",
+                    style = TextStyle(
+                        fontSize = 15.sp,
+                        lineHeight = 23.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = { onRemovePhrase(phraseIndex) },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Text("×", fontSize = 15.sp, color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
+
+        TextButton(onClick = onAddPhrase) {
+            Text("＋ 加一句", fontSize = 12.sp)
+        }
+
+        if (section.cues.isNotEmpty()) {
+            Text(
+                text = section.cues.joinToString("　") { "${it.icon} ${it.text}" },
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * 已保存的一段骨架（只读）。
+ *
+ * 短语用圆点而不是 chip：视觉上传达「这是提示，不是稿子」。
+ * 加了边框的 chip 会被读成按钮，而它按不动——按不动的按钮
+ * 比没有按钮更让人恼火。
+ */
 @Composable
 private fun SavedSectionCard(section: Section) {
     Column(
@@ -531,12 +756,30 @@ private fun SavedSectionCard(section: Section) {
                 )
             }
         }
+        if (section.cues.isNotEmpty()) {
+            Spacer(Modifier.height(Spacing.s))
+            Row(
+                Modifier
+                    .clip(MaterialTheme.shapes.extraSmall)
+                    .background(StatusColors.aiFill.copy(alpha = 0.5f))
+                    .padding(horizontal = Spacing.s, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                section.cues.forEach { cue ->
+                    Text(
+                        text = "${cue.icon} ${cue.text}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 
 /** 已拍摄。诚实显示，不加任何评分 */
 @Composable
-private fun ShotDoneBlock() {
+private fun ShotDoneBlock(onUndo: () -> Unit = {}) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -565,6 +808,14 @@ private fun ShotDoneBlock() {
             lineHeight = 18.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // 点错了要有退路。标错日期不会毁掉什么，
+        // 但一直错着会让人不信任这个勾
+        TextButton(
+            onClick = onUndo,
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+        ) {
+            Text("撤销标记", fontSize = 12.sp)
+        }
     }
 }
 

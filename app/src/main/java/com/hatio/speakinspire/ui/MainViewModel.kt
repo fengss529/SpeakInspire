@@ -6,6 +6,9 @@ import com.hatio.speakinspire.data.local.SpeakInspireDatabase
 import com.hatio.speakinspire.data.local.TrashType
 import com.hatio.speakinspire.data.repository.IdeaRepository
 import com.hatio.speakinspire.domain.ArticleView
+import com.hatio.speakinspire.domain.DayLog
+import com.hatio.speakinspire.domain.DayLogBuilder
+import com.hatio.speakinspire.domain.NoteStamp
 import com.hatio.speakinspire.domain.NoteState
 import com.hatio.speakinspire.domain.NoteView
 import com.hatio.speakinspire.domain.Streak
@@ -73,24 +76,12 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 右滑 = 标记已拍摄。
+     * 搁置 / 取消搁置。
      *
-     * 现在选题自己就是一张能独立打开的卡片，所以直接拿 scriptId 操作——
-     * 不再需要「先找到那条记录，再从它的选题里挑一个没拍的」。
+     * 标记已拍摄不在这里：它要先把骨架看清楚再点，所以只放在
+     * 选题详情页（[com.hatio.speakinspire.ui.topic.TopicViewModel]）。
+     * 留在这里的只有「不进入详情页也要能做的低频动作」。
      */
-    fun markShot(scriptId: String, onResult: (Boolean) -> Unit = {}) {
-        viewModelScope.launch {
-            val exists = repo.findTopic(scriptId) != null
-            if (exists) repo.markShot(scriptId)
-            onResult(exists)
-        }
-    }
-
-    fun undoShot(scriptId: String) {
-        viewModelScope.launch { repo.undoShot(scriptId) }
-    }
-
-    /** 左滑 = 搁置。搁置而非删除 */
     fun park(scriptId: String) {
         viewModelScope.launch { repo.parkScript(scriptId) }
     }
@@ -142,7 +133,21 @@ data class MainUiState(
         shot = topic.count { it.state == TopicState.SHOT },
         parked = topic.count { it.state == TopicState.PARKED },
         streak = Streak.days(record.map { it.note.createdAt }),
+        longestStreak = Streak.longest(record.map { it.note.createdAt }),
     )
+
+    /**
+     * 按天聚合的记录分布，日历用。
+     *
+     * `by lazy`：统计页每次重组都会读它，而它要遍历全部记录建一张 Map。
+     * 用 getter 会在每次重组时重算；这里一个 [MainUiState] 只对应一份数据，
+     * 算一次就够。
+     */
+    val dayLog: DayLog by lazy {
+        DayLogBuilder.build(
+            record.map { NoteStamp(it.note.createdAt, it.note.title, it.note.body) }
+        )
+    }
 
     /** 「已深化但还没成文」——这一环流失最多，单独标出来 */
     val pendingCount: Int get() = record.count { it.state == NoteState.DEEPENED }
@@ -180,6 +185,8 @@ data class Stats(
     val parked: Int,
     /** 连续记录天数 */
     val streak: Int,
+    /** 历史最长连续天数。断了也不会归零 */
+    val longestStreak: Int = 0,
 ) {
     /**
      * 记录 → 成文的转化。分母是记录，分子是记录自己的状态，口径自洽。

@@ -248,6 +248,36 @@ class IdeaRepository(
         deepeningDao.findLatestByNote(noteId)?.toModel()
 
     /**
+     * 改某一轮的回答。
+     *
+     * ## 为什么按下标改，而不是重写整个 rounds
+     *
+     * `Round = 一个问题 + 可选一个回答`，问答的**配对关系**是这条链路里
+     * 最容易搞坏的东西（历史上就出过「回答时新增一轮，下一问 dropLast
+     * 把上一轮删掉」的 bug，每答一次丢一句）。所以这里只允许替换
+     * `answer` 字段，`question` 原样带过去，轮数和顺序都不动。
+     *
+     * ## 为什么不改 finishedAt
+     *
+     * 改一句自己说过的话，不等于「重新开了一次追问」。
+     * 动了 finishedAt 会让这条记录的状态在「已深化 / 深化中」之间跳。
+     *
+     * 返回是否真的写进去了——id 或下标不对时静默成功会让用户
+     * 以为「改了没反应」。
+     */
+    suspend fun updateRoundAnswer(noteId: String, index: Int, text: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val entity = deepeningDao.findLatestByNote(noteId) ?: return@withContext false
+            val rounds = entity.toModel().rounds
+            if (index !in rounds.indices) return@withContext false
+
+            val updated = rounds.toMutableList()
+            updated[index] = updated[index].copy(answer = text.ifBlank { null })
+            deepeningDao.upsert(entity.copy(roundsJson = SimpleJson.encodeRounds(updated)))
+            true
+        }
+
+    /**
      * 存文章。
      *
      * 顺带把它的回收站记录清掉：能写进去就说明它是活的。

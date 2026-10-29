@@ -242,6 +242,27 @@ object Streak {
         return count
     }
 
+    /**
+     * 最长连续天数。**历史最佳，不是当前**。
+     *
+     * 统计页同时给「当前连续」和「最长」两个数：
+     * 只有当前连续的时候，一旦断了，那个数字会归零，
+     * 用户会觉得「之前的 30 天白记了」。最长那个数不会归零，
+     * 它记着「你做到过」。
+     */
+    fun longest(timestamps: List<Long>): Int {
+        if (timestamps.isEmpty()) return 0
+        val days = timestamps.map { dayKey(it) }.toSortedSet().toList()
+
+        var best = 1
+        var run = 1
+        for (i in 1 until days.size) {
+            run = if (shift(days[i - 1], 1) == days[i]) run + 1 else 1
+            if (run > best) best = run
+        }
+        return best
+    }
+
     private fun dayKey(ms: Long): Int {
         val c = java.util.Calendar.getInstance()
         c.timeInMillis = ms
@@ -262,30 +283,13 @@ object Streak {
     }
 }
 
-// ---------------------------------------------------------------- 手势
-
-/**
- * 手势判定。纯函数——右滑标记已拍摄，左滑搁置。
- *
- * 决策：左滑不是删除（文章本身没错），是「这个角度先不拍」。
- */
-enum class SwipeAction { MARK_SHOT, PARK, NONE }
-
-object GestureJudge {
-    const val MIN_DX = 55f
-    /** 横向位移需明显大于纵向，否则判为滚动而非滑动 */
-    const val HORIZONTAL_RATIO = 1.5f
-    const val MAX_ANGLE_DEG = 22f
-
-    fun judge(dx: Float, dy: Float): SwipeAction {
-        if (kotlin.math.abs(dx) < MIN_DX) return SwipeAction.NONE
-        if (kotlin.math.abs(dx) < kotlin.math.abs(dy) * HORIZONTAL_RATIO) return SwipeAction.NONE
-        // 太斜的滑动手势多半是「斜着划一下」，不作为有效滑动
-        val angle = Math.toDegrees(
-            kotlin.math.atan(kotlin.math.abs(dy).toDouble() / kotlin.math.abs(dx).toDouble())
-        )
-        if (angle > MAX_ANGLE_DEG) return SwipeAction.NONE
-
-        return if (dx > 0) SwipeAction.MARK_SHOT else SwipeAction.PARK
-    }
-}
+// ---------------------------------------------------------------- 手势（已移除）
+//
+// 选题卡片曾经支持「右滑已拍摄 / 左滑搁置」。
+// 那两个动作在列表里做，等于让用户在对一条内容还没看清楚的时候
+// 就改变它的状态——滑动的歧义（是滚动还是操作）加上误触，
+// 撤销条成了必需品，而不是补救。
+//
+// V0.11 起改为：列表 ⋮ 菜单放低频动作（搁置 / 删除），
+// 详情页放主动作（标记已拍摄）。滑动手势连同判定函数一并删除，
+// 不留「以后可能用得上」的死代码。

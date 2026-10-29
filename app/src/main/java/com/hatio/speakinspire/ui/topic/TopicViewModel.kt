@@ -225,6 +225,127 @@ class TopicViewModel @Inject constructor(
         }
     }
 
+    fun unpark() {
+        val scriptId = _state.value.existingScript?.id ?: return
+        viewModelScope.launch {
+            repo.unparkScript(scriptId)
+            _state.value = _state.value.copy(parked = false)
+        }
+    }
+
+    // ------------------------------------------------------------ 就地编辑
+    //
+    // ## 为什么只有这几样能改
+    //
+    // 能改：角度名、四段的标题、每段的意群短语（增 / 删 / 改）。
+    // 不能改：时长、镜头提示。
+    //
+    // 时长是 AI 给的节奏建议，改那个数字对实际拍摄没有作用；
+    // 镜头提示是「拍摄时余光扫一眼」的东西，在手机上编辑它的体验
+    // 只会更差。短语才是真正会不合口味的部分——那是你要照着讲的。
+
+    fun enterEdit() {
+        val current = _state.value
+        val script = current.existingScript ?: return
+        _state.value = current.copy(
+            editing = true,
+            draftAngle = script.angle,
+            draftSections = script.sections,
+        )
+    }
+
+    fun cancelEdit() {
+        _state.value = _state.value.copy(
+            editing = false,
+            draftAngle = "",
+            draftSections = emptyList(),
+        )
+    }
+
+    fun updateDraftAngle(text: String) {
+        _state.value = _state.value.copy(draftAngle = text)
+    }
+
+    fun updateSectionTitle(sectionIndex: Int, text: String) {
+        val draft = _state.value.draftSections
+        if (sectionIndex !in draft.indices) return
+        _state.value = _state.value.copy(
+            draftSections = draft.toMutableList().also {
+                it[sectionIndex] = it[sectionIndex].copy(title = text)
+            },
+        )
+    }
+
+    fun updatePhrase(sectionIndex: Int, phraseIndex: Int, text: String) {
+        val draft = _state.value.draftSections
+        val section = draft.getOrNull(sectionIndex) ?: return
+        if (phraseIndex !in section.phrases.indices) return
+        _state.value = _state.value.copy(
+            draftSections = draft.toMutableList().also {
+                val phrases = section.phrases.toMutableList()
+                phrases[phraseIndex] = text
+                it[sectionIndex] = section.copy(phrases = phrases)
+            },
+        )
+    }
+
+    /** 加一句。给一个空槽让用户直接打字，比先弹个对话框顺手 */
+    fun addPhrase(sectionIndex: Int) {
+        val draft = _state.value.draftSections
+        val section = draft.getOrNull(sectionIndex) ?: return
+        _state.value = _state.value.copy(
+            draftSections = draft.toMutableList().also {
+                it[sectionIndex] = section.copy(phrases = section.phrases + "")
+            },
+        )
+    }
+
+    fun removePhrase(sectionIndex: Int, phraseIndex: Int) {
+        val draft = _state.value.draftSections
+        val section = draft.getOrNull(sectionIndex) ?: return
+        if (phraseIndex !in section.phrases.indices) return
+        _state.value = _state.value.copy(
+            draftSections = draft.toMutableList().also {
+                it[sectionIndex] = section.copy(
+                    phrases = section.phrases.filterIndexed { i, _ -> i != phraseIndex },
+                )
+            },
+        )
+    }
+
+    /**
+     * 存回库里。
+     *
+     * 空短语会被丢掉——在界面上把一个短语删空再保存，
+     * 不该在数据里留下一串空行；那些空行到了拍摄页会变成几个黑点。
+     */
+    fun saveEdit() {
+        val current = _state.value
+        val script = current.existingScript ?: return
+
+        val cleaned = current.draftSections.map { section ->
+            section.copy(
+                title = section.title.trim(),
+                phrases = section.phrases.map { it.trim() }.filter { it.isNotEmpty() },
+            )
+        }
+        val updated = script.copy(
+            // 角度名删空了就保留原来那个——它同时是卡片标题的兜底
+            angle = current.draftAngle.trim().ifBlank { script.angle },
+            sections = cleaned,
+        )
+
+        viewModelScope.launch {
+            repo.saveScript(updated)
+            _state.value = _state.value.copy(
+                existingScript = updated,
+                editing = false,
+                draftAngle = "",
+                draftSections = emptyList(),
+            )
+        }
+    }
+
     fun back() {
         _state.value = _state.value.copy(
             chosenAngle = null,
@@ -260,6 +381,10 @@ data class TopicUiState(
     val parked: Boolean = false,
     val saved: Boolean = false,
     val errorMessage: String? = null,
+    /** 正在改骨架。true 时界面读 [draftSections] 而不是已存的 */
+    val editing: Boolean = false,
+    val draftAngle: String = "",
+    val draftSections: List<Section> = emptyList(),
 ) {
     val hasExisting: Boolean get() = existingScript != null
 
