@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/fengss529/SpeakInspire/actions/workflows/ci.yml/badge.svg)](https://github.com/fengss529/SpeakInspire/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/fengss529/SpeakInspire?label=release)](https://github.com/fengss529/SpeakInspire/releases/latest)
 
 **把「说得清楚」练出来。** 随手记下想说的话 → AI 追问把你没说透的地方问出来 → 写成文章 → 拆成拍摄选题 → 你用自己的相机拍成短视频。
 
