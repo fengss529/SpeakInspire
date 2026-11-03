@@ -734,6 +734,18 @@ adb install -r app/build/outputs/apk/release/app-release.apk   # 原有数据保
 Release 变体会开 R8，混淆规则漏了 `keep` 只会在这个变体里暴露。这次就是在这里第一次撞上
 `security-crypto` 的 Tink 缺少 `com.google.errorprone.annotations.*`，本地只构建 debug 时完全看不到。
 
+#### 第一次真正跑起来踩的三个坑（2026-11-03）
+
+| 现象 | 真实原因 | 处理 |
+|---|---|---|
+| 「安装 Android SDK」步骤失败 | 第三方 action `android-actions/setup-android@v3` 在这一步挂了 | 去掉这层依赖，直接用 runner 自带的 SDK 与 `cmdline-tools` |
+| 「跑测试」1 秒就失败 | 仓库在 Windows 上提交过，`core.filemode=false`，`gradlew` 存成 `100644`，Linux 上 `./gradlew` 是 Permission denied | 索引改 `100755`，CI 里再 `chmod +x` 兜底 |
+| 插件「在六个仓库里都找不到」 | aliyun 镜像对海外 IP 返回 **502**，而 Gradle 把「这个仓库取不到」记成了「这个坐标到处都没有」，报错指向版本号 | CI 上不走国内镜像（见 `settings.gradle.kts` 顶部注释） |
+
+第二条值得记住：**报错只有一行，看起来像「测试挂了」，实际是文件权限。**
+另外 Actions 的完整日志要登录才能看，所以失败时 CI 会把 `What went wrong` 之后那几行
+抛成 `::error::` 注解——注解是任何人可见的，开源仓库的失败原因不该只对维护者可见。
+
 ---
 
 ## 许可证

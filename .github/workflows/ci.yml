@@ -68,13 +68,19 @@ jobs:
       #
       # 失败时把关键几行抛成注解（::error::）：Actions 的完整日志要登录才能看，
       # 注解是任何人可见的——仓库是开源的，出了问题得让外面的人也看得见原因。
-      # 临时诊断：确认 runner 能拿到插件（拿不到时注解里会有状态码）
-      - name: 仓库可达性自检
+      # 镜像自检：只在镜像不通时才抛警告。
+      # 上一次故障就是 aliyun 对海外 IP 返回 502，但 Gradle 的报错说
+      # 「插件在六个仓库里都找不到」，指向版本号，完全看不出是镜像挂了。
+      # 有了这一行，注解里直接写着 502，不用再猜。
+      - name: 镜像可达性自检
         run: |
           P="com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/2.0.20-1.0.25/com.google.devtools.ksp.gradle.plugin-2.0.20-1.0.25.pom"
           for host in "https://maven.aliyun.com/repository/public" "https://repo.maven.apache.org/maven2"; do
             code=$(curl -s -o /dev/null -m 20 -w "%{http_code}" "$host/$P" || echo 000)
-            echo "::warning title=仓库探测::$host -> $code"
+            echo "$host -> $code"
+            if [ "$code" != "200" ]; then
+              echo "::warning title=仓库不通::$host 返回 $code"
+            fi
           done
 
       - name: 跑测试
