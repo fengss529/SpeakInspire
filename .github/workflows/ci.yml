@@ -61,8 +61,14 @@ jobs:
 
       # 两个变体都跑：Release 会开启 R8，混淆规则漏了 keep 只会在这里暴露，
       # 本地一直只构建 debug 的话永远发现不了。
+      #
+      # chmod 那一行是兜底：这个仓库在 Windows 上提交过，gradlew 的可执行位
+      # 曾经是 100644，Linux runner 上 `./gradlew` 直接 Permission denied，
+      # 而报错只有一行，很容易被当成「测试挂了」。索引里已经改成 100755。
       - name: 跑测试
-        run: ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain
 
       - name: 上传测试报告
         if: always()
