@@ -65,10 +65,21 @@ jobs:
       # chmod 那一行是兜底：这个仓库在 Windows 上提交过，gradlew 的可执行位
       # 曾经是 100644，Linux runner 上 `./gradlew` 直接 Permission denied，
       # 而报错只有一行，很容易被当成「测试挂了」。索引里已经改成 100755。
+      #
+      # 失败时把关键几行抛成注解（::error::）：Actions 的完整日志要登录才能看，
+      # 注解是任何人可见的——仓库是开源的，出了问题得让外面的人也看得见原因。
       - name: 跑测试
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain
+          set +e
+          ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain 2>&1 | tee gradle.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            msg=$(grep -E "FAILURE|What went wrong|Could not|error:|Permission denied|Exception|> Task .* FAILED" gradle.log \
+                  | head -8 | tr '\n' '|' | cut -c1-900)
+            echo "::error title=Gradle 失败::$msg"
+          fi
+          exit "$status"
 
       - name: 上传测试报告
         if: always()
@@ -78,4 +89,5 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/test-results/
+            gradle.log
           retention-days: 7
