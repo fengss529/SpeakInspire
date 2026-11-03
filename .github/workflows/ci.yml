@@ -40,16 +40,23 @@ jobs:
       - name: 缓存 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # SDK 只装构建要用的那一套。
-      # 显式接受许可，否则 runner 会卡在交互式提示上（CI 里没有人能敲 y）。
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
+      # SDK 不靠第三方 action。ubuntu-latest 镜像自带 Android SDK 与 cmdline-tools，
+      # 直接用现成的；少了 setup-android 这一层依赖，失败点也少一个。
+      # 许可必须显式接受，否则 sdkmanager 会停在交互式提示上（CI 里没人敲 y）。
       - name: 安装平台与构建工具
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
-          # setup-android 不同版本的导出变量名不一致，两个都试
-          echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > local.properties
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "SDK_ROOT=$SDK_ROOT"
+          SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKM" ]; then
+            echo "找不到 sdkmanager：$SDKM"
+            ls -la "$SDK_ROOT" || true
+            exit 1
+          fi
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0"
+          echo "sdk.dir=$SDK_ROOT" > local.properties
           cat local.properties
 
       # 两个变体都跑：Release 会开启 R8，混淆规则漏了 keep 只会在这里暴露，
