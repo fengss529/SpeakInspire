@@ -75,8 +75,12 @@ jobs:
           ./gradlew testDebugUnitTest testReleaseUnitTest --console=plain 2>&1 | tee gradle.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            msg=$(grep -E "FAILURE|What went wrong|Could not|error:|Permission denied|Exception|> Task .* FAILED" gradle.log \
-                  | head -8 | tr '\n' '|' | cut -c1-900)
+            # 取「What went wrong」之后那十几行——Gradle 的原因就写在那里。
+            # 按关键词 grep 会漏掉真正的原因（它常常既不带 error: 也不带 Could not）
+            msg=$(sed -n '/What went wrong/,+14p' gradle.log | tr '\n' '|' | cut -c1-900)
+            if [ -z "$msg" ]; then
+              msg=$(tail -25 gradle.log | tr '\n' '|' | cut -c1-900)
+            fi
             echo "::error title=Gradle 失败::$msg"
           fi
           exit "$status"
