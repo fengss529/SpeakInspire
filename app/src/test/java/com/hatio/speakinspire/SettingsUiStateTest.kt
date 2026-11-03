@@ -74,10 +74,17 @@ class SettingsUiStateTest {
     }
 
     @Test
-    fun `MiMo 默认关思考模式`() {
-        // MiMo 的 thinking 默认开着，不关的话追问会等好几秒
-        val s = state(ProviderConfig.MIMO)
-        assertTrue("MiMo 必须默认关思考", s.thinkingDisabled)
+    fun `预置服务商一律关掉思考模式`() {
+        // 追问和成文都在请求层强制关；这里存的值只是别让它被界面改乱。
+        // 思考模式不是选项，是这条链路的固定条件
+        assertTrue(state(ProviderConfig.DEEPSEEK).toConfig().thinkingDisabled)
+        assertTrue(state(ProviderConfig.MIMO).toConfig().thinkingDisabled)
+    }
+
+    @Test
+    fun `自定义服务商不强塞思考参数`() {
+        // 对面认不认这个字段谁也不知道，发过去可能直接 400
+        assertFalse(state(ProviderConfig.CUSTOM).toConfig().thinkingDisabled)
     }
 
     @Test

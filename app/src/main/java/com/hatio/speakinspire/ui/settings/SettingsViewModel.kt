@@ -7,7 +7,6 @@ import com.hatio.speakinspire.data.export.DownloadStore
 import com.hatio.speakinspire.data.export.LibraryJson
 import com.hatio.speakinspire.data.export.MarkdownExporter
 import com.hatio.speakinspire.data.model.ProviderConfig
-import com.hatio.speakinspire.data.remote.ModelChoice
 import com.hatio.speakinspire.data.remote.Providers
 import com.hatio.speakinspire.data.repository.DraftStyleStore
 import com.hatio.speakinspire.data.repository.IdeaRepository
@@ -65,7 +64,6 @@ class SettingsViewModel @Inject constructor(
                 baseUrl = cfg.baseUrl,
                 model = cfg.model,
                 apiKey = savedKey,
-                thinkingDisabled = cfg.thinkingDisabled,
                 keyAlreadySaved = savedKey.isNotBlank(),
                 probeMethod = probeStore.current(),
                 probeInstruction = probeStore.instructionOf(probeStore.current()),
@@ -152,9 +150,12 @@ class SettingsViewModel @Inject constructor(
         _state.value = _state.value.copy(
             selectedProvider = providerId,
             baseUrl = preset.baseUrl,
+            // 模型跟着服务商走它的预置值。
+            //
+            // 界面上不再让用户挑模型：他没有判断依据（参数说明不该由他读），
+            // 摆一排选项只会让人担心「选错了会不会出问题」。
+            // 自定义服务商仍在卡片里手填模型名。
             model = preset.model,
-            addingModel = false,
-            thinkingDisabled = preset.thinkingDisabled,
             // 先清空，避免把 A 家的 key 发到 B 家
             apiKey = "",
             keyAlreadySaved = false,
@@ -174,65 +175,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 切换到同一个服务商下的另一个模型。
-     *
-     * 换模型不换key —— 同一个服务商的 key 是一样的，
-     * 只需要换模型名。误以为要重填key 会让流程显得很麻烦。
-     */
-    fun selectModel(model: String) {
-        val current = _state.value
-        val preset = Providers.byId(current.selectedProvider)
-        viewModelScope.launch {
-            repo.saveConfig(
-                preset.copy(
-                    apiKey = current.apiKey,
-                    model = model,
-                    // 保留用户可能改过的地址，别被预置值覆盖
-                    baseUrl = current.baseUrl,
-                    thinkingDisabled = current.thinkingDisabled,
-                )
-            )
-            _state.value = current.copy(model = model, testResult = null)
-        }
-    }
-
-    /** 加一个自定义模型名（服务商自己的新模型上线时用） */
-    fun addModel() {
-        val current = _state.value
-        // 直接跳到添加状态，让用户直接填名字
-        _state.value = current.copy(addingModel = true)
-    }
-
-    /** 确认新增的自定义模型 */
-    fun commitNewModel(name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) {
-            _state.value = _state.value.copy(addingModel = false)
-            return
-        }
-        val current = _state.value
-        viewModelScope.launch {
-            repo.saveConfig(
-                Providers.byId(current.selectedProvider).copy(
-                    apiKey = current.apiKey,
-                    model = trimmed,
-                    baseUrl = current.baseUrl,
-                    thinkingDisabled = current.thinkingDisabled,
-                )
-            )
-            _state.value = current.copy(
-                model = trimmed,
-                addingModel = false,
-                testResult = null,
-            )
-        }
-    }
-
-    fun cancelAddModel() {
-        _state.value = _state.value.copy(addingModel = false)
-    }
-
     fun updateBaseUrl(v: String) {
         _state.value = _state.value.copy(baseUrl = v.trim(), testResult = null)
     }
@@ -243,11 +185,6 @@ class SettingsViewModel @Inject constructor(
 
     fun updateKey(v: String) {
         _state.value = _state.value.copy(apiKey = v.trim(), testResult = null)
-    }
-
-    /** [disabled] = 关掉思考模式。字段名叫 thinkingDisabled，别把语义搞反 */
-    fun updateThinking(disabled: Boolean) {
-        _state.value = _state.value.copy(thinkingDisabled = disabled)
     }
 
     /** 用当前输入测试，不落库 */
@@ -392,10 +329,7 @@ data class SettingsUiState(
     val selectedProvider: String = ProviderConfig.DEEPSEEK,
     val baseUrl: String = "",
     val model: String = "",
-    /** 正在输入新的自定义模型名 */
-    val addingModel: Boolean = false,
     val apiKey: String = "",
-    val thinkingDisabled: Boolean = true,
     /** 是否已保存过 key——决定输入框显示占位符还是掩码 */
     val keyAlreadySaved: Boolean = false,
     val testing: Boolean = false,
@@ -424,19 +358,23 @@ data class SettingsUiState(
         baseUrl = baseUrl,
         apiKey = apiKey,
         model = model,
-        thinkingDisabled = thinkingDisabled,
+        // 思考模式固定关掉，不做成选项。
+        //
+        // 追问那一步必须在请求里关（见 RequestBuilder.probe）——
+        // 开着时思维链会先把 max_tokens 吃光，正文一个字都不来，
+        // 表现就是「点了追问没反应」。成文同理：模型会在思维链里
+        // 把话说完，返回的正文只剩一个 `{}`。
+        //
+        // 两处都在请求层强制关闭，所以这个值从界面改与不改没有区别。
+        // 留着一个不生效的开关，用户会以为自己调过它就修好了。
+        //
+        // 自定义服务商除外：谁也不知道对面认不认这个字段，
+        // 发一个它不认识的参数可能直接被 400 拒掉。
+        thinkingDisabled = selectedProvider != ProviderConfig.CUSTOM,
     )
 
     /** 自定义服务商才需要填地址与模型名 */
     val needsManualInput: Boolean get() = selectedProvider == ProviderConfig.CUSTOM
-
-    /** 该服务商的候选模型。空表示要手填 */
-    val modelChoices: List<ModelChoice> get() = Providers.candidates(selectedProvider)
-
-    /** 当前模型不在候选列表里——服务商可能上了新模型 */
-    val isCustomModelName: Boolean
-        get() = modelChoices.isNotEmpty() && modelChoices.none { it.model == model }
-
 
     /** 预置服务商的 key 提示。写清楚去哪儿拿，减少用户困惑 */
     val keyHint: String get() = when (selectedProvider) {
