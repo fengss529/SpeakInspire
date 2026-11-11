@@ -184,6 +184,9 @@ class RealAiService(
     private fun sproutBlock(sprouts: List<Sprout>): String = buildString {
         appendLine("【他自己长过的芽】")
         appendLine("这些是他在 App 里看过、认可过的连接。里面混着别人的说法、例子、引用。")
+        // 这句话是给它定位用的：不这么说，模型会把这堆东西当成
+        // 「可选参考资料」，能不用就不用。它是骨架，不是附录
+        appendLine("它们是这篇文章的骨架，不是待引用的资料——具体怎么用见系统提示。")
         appendLine("凡是用了这里面东西的段落：isMine = false，fromSprout = true。")
         appendLine("原文没有出处的那几条，写进文章时也不许替它补一个出处。")
         appendLine()
@@ -217,7 +220,13 @@ class RealAiService(
         }
 
         return try {
-            val system = Prompts.draftSystem(context.style, context.styleInstruction)
+            val system = Prompts.draftSystem(
+                style = context.style,
+                styleNote = context.styleInstruction,
+                // 只有这次真的会把芽发过去，才讲「怎么用芽」。
+                // 讲了却没有芽，模型会去找一份并不存在的材料，或者自己编几条
+                withSprouts = context.includeSprouts && context.sprouts.isNotEmpty(),
+            )
             val messages = composeMessages(context)
             val body = RequestBuilder.compose(cfg, system, messages)
             val raw0 = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)

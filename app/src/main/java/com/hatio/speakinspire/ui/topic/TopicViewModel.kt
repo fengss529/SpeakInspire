@@ -56,12 +56,23 @@ class TopicViewModel @Inject constructor(
      *
      * 文章独立之后，它可能压根没有来源记录（记录被删了），
      * 所以这页的入口参数必须是 articleId——拿 noteId 进来会找不到东西。
+     *
+     * ## 已经有了选题，也照样让你再拆一条
+     *
+     * 原先这里 `existing == null` 才拆角度：这篇文章转过一次之后，
+     * 再点「转成一条选题」就直接落到那条旧骨架上，**看不到角度选择**。
+     * 用户的原话是「第二次转的时候就没有选择了，直接跳到拍摄骨架」。
+     *
+     * 一篇文章本来就该能派生出好几条选题（同一个观点，可以从经历讲、
+     * 从原理讲、从反方讲）。所以现在只要带着已有选题进来，
+     * 先给一页 [TopicStep.PICK]：已有哪些、要不要新建一条。
+     * 想直接看已有的那条也可以，一键就到。
      */
     fun load(articleId: String) {
         viewModelScope.launch {
             val article = repo.findArticle(articleId)
-            val existing = article
-                ?.let { a -> repo.topicsOfArticle(a.article.id).firstOrNull { !it.script.parked } }
+            // 全部选题，搁置的也算——他要的是「这篇派过几条」，不是「还剩几条能用」
+            val topics = article?.let { repo.topicsOfArticle(it.article.id) }.orEmpty()
 
             // 这条文章的出处记录长过哪些芽。
             //
@@ -76,16 +87,62 @@ class TopicViewModel @Inject constructor(
                 articleId = articleId,
                 articleTitle = article?.article?.title.orEmpty(),
                 articleParagraphs = article?.article?.paragraphs?.map { it.text } ?: emptyList(),
-                existingScript = existing?.script,
-                shotAt = existing?.script?.shotAt,
-                parked = existing?.state == TopicState.PARKED,
+                existingTopics = topics.map {
+                    TopicBrief(
+                        scriptId = it.script.id,
+                        angle = it.script.angle,
+                        isShot = it.script.shotAt != null,
+                        parked = it.state == TopicState.PARKED,
+                    )
+                },
                 sprouts = sprouts,
+                // 已有选题先让他挑；一条都没有就直接拆角度，不让他多点一下
+                step = if (topics.isEmpty()) TopicStep.ANGLES else TopicStep.PICK,
             )
 
-            // 还没有选题就去拆角度
-            if (existing == null && article != null) {
+            if (topics.isEmpty() && article != null) {
                 deriveAngles(article.article.title, article.article.paragraphs.map { it.text })
             }
+        }
+    }
+
+    /**
+     * 从选项页打开一条**已经存在**的选题。
+     *
+     * 不走 `loadTopic`：那条路要重建整个状态，会把已经拆好的角度丢掉，
+     * 用户在「已有」和「新建」之间来回点就得重新等一次 AI。
+     */
+    fun openExisting(scriptId: String) {
+        viewModelScope.launch {
+            val topic = repo.findTopic(scriptId) ?: return@launch
+            _state.value = _state.value.copy(
+                existingScript = topic.script,
+                shotAt = topic.script.shotAt,
+                parked = topic.state == TopicState.PARKED,
+                chosenAngle = null,
+                outline = null,
+                // 记住「是从列表点进来的」：这种时候按返回应该回列表，
+                // 而不是退出整页。不然想看选题 2 就得退出去重进一次
+                cameFromPick = true,
+                step = TopicStep.OUTLINE,
+            )
+        }
+    }
+
+    /** 选「再拆一个新角度」：回到角度选择。角度还没拆过就现拆 */
+    fun startNew() {
+        val current = _state.value
+        _state.value = current.copy(
+            existingScript = null,
+            shotAt = null,
+            parked = false,
+            chosenAngle = null,
+            outline = null,
+            cameFromPick = false,
+            step = TopicStep.ANGLES,
+        )
+        if (current.angles.isEmpty() && !current.loadingAngles) {
+            deriveAngles(current.articleTitle, current.articleParagraphs)
         }
     }
 
@@ -207,6 +264,12 @@ class TopicViewModel @Inject constructor(
             _state.value = _state.value.copy(
                 existingScript = script,
                 saved = true,
+                // 角度已经落成脚本了，这个草稿不再有意义。
+                // 不清的话，按返回会被当成「刚选完角度」，又退回角度列表——
+                // 而他已经存好了，没有「再挑一个」的意思
+                chosenAngle = null,
+                cameFromPick = false,
+                step = TopicStep.OUTLINE,
             )
         }
     }
@@ -425,15 +488,36 @@ class TopicViewModel @Inject constructor(
     }
 
     fun back() {
-        _state.value = _state.value.copy(
+        val s = _state.value
+        // 两种来路要回到两个地方：
+        // · 刚从角度里选了一个 → 退回角度列表（挑别的）
+        // · 是在看一条已有的 → 退回「已有 / 新建」那一页
+        val toAngles = s.chosenAngle != null || s.existingTopics.isEmpty()
+        _state.value = s.copy(
             chosenAngle = null,
             outline = null,
-            step = TopicStep.ANGLES,
+            existingScript = if (toAngles) s.existingScript else null,
+            step = if (toAngles) TopicStep.ANGLES else TopicStep.PICK,
         )
     }
 }
 
-enum class TopicStep { ANGLES, OUTLINE }
+/**
+ * 这一页有哪几种状态。
+ *
+ * [PICK] 是后加的：文章派生出第二条选题时才用得上。
+ * 只有一条都没有时，直接进 [ANGLES]——没得挑的时候多一页就是多一次点击。
+ */
+enum class TopicStep { PICK, ANGLES, OUTLINE }
+
+/** 选项页上的一条已有选题。只带列表要显示的那几个字段 */
+data class TopicBrief(
+    val scriptId: String,
+    /** 切入角度。同一篇文章的几条选题，在列表里就是靠它区分的 */
+    val angle: String,
+    val isShot: Boolean,
+    val parked: Boolean,
+)
 
 data class TopicUiState(
     /** 选题所属文章的真实 id。空表示这篇文章还没写成 */
@@ -470,6 +554,20 @@ data class TopicUiState(
      * 只在**生成骨架**时用到：素材优先复用它们。
      * 已经存过的选题不需要它——素材已经落库了。
      */
+    /**
+     * 这条文章已经派生出过哪些选题。
+     *
+     * 非空时，进来的第一页是「挑一条已有的 / 再拆一个新的」。
+     * 一篇文章本来就可以拍好几条视频，这个列表就是它的证据。
+     */
+    val existingTopics: List<TopicBrief> = emptyList(),
+    /**
+     * 当前这条骨架是**从选项页点进来**看的（不是刚生成、也不是刚存的）。
+     *
+     * 只影响返回键去哪：从列表点进来的要能退回列表，
+     * 刚存好的要直接退出这一页。
+     */
+    val cameFromPick: Boolean = false,
     val sprouts: List<Sprout> = emptyList(),
 ) {
     val hasExisting: Boolean get() = existingScript != null

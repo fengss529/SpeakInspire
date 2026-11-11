@@ -172,9 +172,21 @@ fun ComposeScreen(
                     if (!state.loading) {
                         ComposeChips(
                             state = state,
+                            // 来源记录被删了，就没有可重写的素材和原文——
+                            // 芯片只作为「这篇当时用了什么」的标记，不让点
+                            canEdit = state.noteId.isNotBlank(),
                             onToggle = onToggleChip,
                             onOpenStyle = { stylePickerOpen = true },
                         )
+                        // 「该重写了」跟着芯片走，不是跟着正文走。
+                        //
+                        // 原来是放在正文下面、保存栏上面：用户在上面换了风格，
+                        // 提示出现在**屏幕另一头**（文章长的时候要滚到底才看得见），
+                        // 中间隔着整整一篇文章。他现在看的是芯片，
+                        // 反馈就该在芯片下面。
+                        if (state.needsRecompose && state.hasContent) {
+                            StaleBanner(onRecompose = onRetry)
+                        }
                     }
                     Box(Modifier.weight(1f)) {
                         when {
@@ -199,10 +211,8 @@ fun ComposeScreen(
             // 改过风格或勾选之后，正文和设置对不上了。
             //
             // 只提示、不自动重写：一次成文是一次真实调用，
-            // 点一下芯片就烧一次额度、等十几秒，那不是点一下该有的代价
-            if (state.needsRecompose && state.hasContent && !state.loading) {
-                StaleBanner(onRecompose = onRetry)
-            }
+            // 点一下芯片就烧一次额度、等十几秒，那不是点一下该有的代价。
+            // （提示本身已经移到芯片下面了，见上面的 ComposeChips）
 
             if (state.hasContent && !state.loading) {
                 // 已经在思考库里 → 这是**看文章**，不是「再存一次」。
@@ -253,6 +263,8 @@ fun ComposeScreen(
 @Composable
 private fun ComposeChips(
     state: ComposeUiState,
+    /** 能不能改这两样。来源记录已被删掉时它是 false——素材和原文都没了，改不动 */
+    canEdit: Boolean,
     onToggle: (ComposeChip) -> Unit,
     onOpenStyle: () -> Unit,
 ) {
@@ -267,11 +279,13 @@ private fun ComposeChips(
         // 风格：带一个下拉箭头，暗示「点开还有别的」
         AssistChip(
             onClick = onOpenStyle,
+            enabled = canEdit,
             label = {
                 Text(
                     text = "${state.style.label} ▾",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (canEdit) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline,
                 )
             },
         )
@@ -280,6 +294,7 @@ private fun ComposeChips(
             SourceChip(
                 label = "追问 ${state.roundCount} 轮",
                 checked = state.includeDialogue,
+                enabled = canEdit,
                 onClick = { onToggle(ComposeChip.DIALOGUE) },
             )
         }
@@ -287,6 +302,7 @@ private fun ComposeChips(
             SourceChip(
                 label = "发芽 ${state.sproutCount} 颗",
                 checked = state.includeSprouts,
+                enabled = canEdit,
                 onClick = { onToggle(ComposeChip.SPROUTS) },
             )
         }
@@ -295,21 +311,33 @@ private fun ComposeChips(
         SourceChip(
             label = "记录原文",
             checked = state.includeNote,
+            enabled = canEdit,
             onClick = { onToggle(ComposeChip.NOTE) },
         )
     }
 }
 
 @Composable
-private fun SourceChip(label: String, checked: Boolean, onClick: () -> Unit) {
+private fun SourceChip(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     FilterChip(
         selected = checked,
         onClick = onClick,
+        // **不能点的芯片必须是灰的。**
+        //
+        // 之前这里没传 enabled：芯片长得像一个可以勾的开关，
+        // 点下去也有涟漪反馈，但什么事都不发生——
+        // 上一级漏传回调，界面不会报错，只是「看起来能点」。
+        enabled = enabled,
         label = {
             Text(
                 text = label,
                 fontSize = 12.sp,
-                color = if (checked) MaterialTheme.colorScheme.onSecondaryContainer
+                color = if (checked && enabled) MaterialTheme.colorScheme.onSecondaryContainer
                 else MaterialTheme.colorScheme.outline,
             )
         },
@@ -398,7 +426,7 @@ private fun StaleBanner(onRecompose: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "这篇还是按刚才的设置写的。",
+            text = "下面的正文还是按刚才的选择写的。",
             fontSize = 11.sp,
             lineHeight = 16.sp,
             color = MaterialTheme.colorScheme.onTertiaryContainer,

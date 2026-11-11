@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +55,7 @@ import com.hatio.speakinspire.domain.MaterialKit
 import com.hatio.speakinspire.ui.components.EditField
 import com.hatio.speakinspire.ui.theme.Spacing
 import com.hatio.speakinspire.ui.theme.StatusColors
+import com.hatio.speakinspire.ui.topic.TopicBrief
 import com.hatio.speakinspire.ui.topic.TopicStep
 import com.hatio.speakinspire.ui.topic.TopicUiState
 import kotlinx.coroutines.launch
@@ -96,6 +99,10 @@ fun ConvertTopicScreen(
     onAddMaterial: () -> Unit = {},
     onRemoveMaterial: (Int) -> Unit = {},
     onSettings: () -> Unit = {},
+    /** 选项页上点了一条已有的选题 */
+    onOpenExisting: (String) -> Unit = {},
+    /** 选项页上点「再拆一个新角度」 */
+    onStartNew: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -111,7 +118,14 @@ fun ConvertTopicScreen(
                             // 所以要有这一步拦住，别直接离页）
                             when {
                                 state.editing -> onCancelEdit()
-                                state.step == TopicStep.OUTLINE -> onBackToAngles()
+                                // 骨架页有两种来路：
+                                // · 刚从角度里选了一个，或从选项页点进来的 → 退回上一层
+                                // · 刚存好（chosenAngle 已清空、cameFromPick 也是 false）
+                                //   → 直接离开这一页。他已经存好了，
+                                //   退到角度列表只会让他以为自己又得选一次
+                                state.step == TopicStep.OUTLINE &&
+                                    (state.chosenAngle != null || state.cameFromPick) ->
+                                    onBackToAngles()
                                 else -> onBack()
                             }
                         },
@@ -127,6 +141,7 @@ fun ConvertTopicScreen(
                         text = when {
                             state.editing -> "编辑骨架"
                             state.hasExisting -> "拍摄骨架"
+                            state.step == TopicStep.PICK -> "这篇的选题"
                             state.step == TopicStep.ANGLES -> "从哪讲起"
                             else -> "拍摄骨架"
                         },
@@ -182,6 +197,12 @@ fun ConvertTopicScreen(
                             }
                         },
                     )
+                } else if (state.step == TopicStep.PICK) {
+                    TopicPicker(
+                        state = state,
+                        onOpen = onOpenExisting,
+                        onNew = onStartNew,
+                    )
                 } else if (state.step == TopicStep.ANGLES) {
                     AnglePicker(
                         state = state,
@@ -193,6 +214,113 @@ fun ConvertTopicScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * 已经有选题了，先挑：看哪一条，还是再拆一条。
+ *
+ * ## 为什么需要这一页
+ *
+ * 一篇文章本来就能拍好几条——同一个观点，可以从经历讲、从原理讲、
+ * 从反方讲。之前点「转成一条选题」，转过一次之后就再也进不到角度选择，
+ * 只能看到那条旧的骨架。用户的原话是
+ * 「第二次转的时候就没有选择了，直接跳到拍摄骨架」。
+ *
+ * ## 只有一条都没有时这一页不出现
+ *
+ * ViewModel 那边看到「零条选题」就直接进角度选择。
+ * 没得挑的时候，多一页就是多一次点击。
+ */
+@Composable
+private fun TopicPicker(
+    state: TopicUiState,
+    onOpen: (String) -> Unit,
+    onNew: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.l),
+    ) {
+        Spacer(Modifier.height(Spacing.m))
+        Text(
+            text = "这篇已经派出去 ${state.existingTopics.size} 条选题。" +
+                "一篇文章可以拍好几条，从不同角度讲同一件事。",
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        Spacer(Modifier.height(Spacing.l))
+
+        state.existingTopics.forEachIndexed { index, topic ->
+            TopicRow(index + 1, topic) { onOpen(topic.scriptId) }
+            Spacer(Modifier.height(Spacing.s))
+        }
+
+        Spacer(Modifier.height(Spacing.m))
+
+        OutlinedButton(
+            onClick = onNew,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Text("再拆一个新角度", fontSize = 13.sp)
+        }
+
+        Spacer(Modifier.height(Spacing.xxl))
+    }
+}
+
+@Composable
+private fun TopicRow(index: Int, topic: TopicBrief, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .clickable(onClick = onClick)
+            .padding(Spacing.l),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "选题 $index",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = topic.angle,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            // 状态只在有话说的时候出现。「待开拍」是默认状态，
+            // 每条都挂一个就变成噪声了
+            val status = when {
+                topic.isShot -> "已拍摄"
+                topic.parked -> "已搁置"
+                else -> ""
+            }
+            if (status.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = status,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
+        Icon(
+            imageVector = Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -450,17 +578,30 @@ private fun OutlineSectionCard(section: com.hatio.speakinspire.data.model.Outlin
         // 镜头提示
         if (section.cues.isNotEmpty()) {
             Spacer(Modifier.height(Spacing.s))
-            Row(
+            // 一条一行。
+            //
+            // 这里原来是 `Row { cues.forEach { Text(...) } }`——几条提示横向并排。
+            // Text 不带权重、Row 又不换行，于是 N 条提示在屏宽里各分到几十 dp，
+            // 每一句都折成七八行，整块被撑到屏幕一半高：
+            // 用户看到的是「一大片空白，底下压着两行小字」，
+            // 而且只有挤得进来的前两条可见，剩下的被裁在屏幕外。
+            Column(
                 Modifier
+                    .fillMaxWidth()
                     .clip(MaterialTheme.shapes.extraSmall)
                     .background(StatusColors.aiFill.copy(alpha = 0.5f))
                     .padding(horizontal = Spacing.s, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
                 section.cues.forEach { cue ->
+                    // 图标和文字合成一行，不分成两列。
+                    //
+                    // 分成两列需要一个固定宽度的图标列，但 `Cue.icon` 里
+                    // 装的不是 emoji，是「停顿」「看镜头」「手势」这种两三个字的词——
+                    // 列宽一窄就被压成两行，每条提示都多出一行高度。
                     Text(
                         text = "${cue.icon} ${cue.text}",
                         fontSize = 11.sp,
+                        lineHeight = 17.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -737,12 +878,18 @@ private fun EditableSectionCard(
         }
 
         if (section.cues.isNotEmpty()) {
-            Text(
-                text = section.cues.joinToString("　") { "${it.icon} ${it.text}" },
-                fontSize = 11.sp,
-                lineHeight = 17.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // 一条一行，和只读态保持一致。用「　」把它们串成一段的话，
+            // 两条手势提示会读成一句话，拍摄时反而要现分
+            Column {
+                section.cues.forEach { cue ->
+                    Text(
+                        text = "${cue.icon} ${cue.text}",
+                        fontSize = 11.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -801,17 +948,30 @@ private fun SavedSectionCard(section: Section) {
         }
         if (section.cues.isNotEmpty()) {
             Spacer(Modifier.height(Spacing.s))
-            Row(
+            // 一条一行。
+            //
+            // 这里原来是 `Row { cues.forEach { Text(...) } }`——几条提示横向并排。
+            // Text 不带权重、Row 又不换行，于是 N 条提示在屏宽里各分到几十 dp，
+            // 每一句都折成七八行，整块被撑到屏幕一半高：
+            // 用户看到的是「一大片空白，底下压着两行小字」，
+            // 而且只有挤得进来的前两条可见，剩下的被裁在屏幕外。
+            Column(
                 Modifier
+                    .fillMaxWidth()
                     .clip(MaterialTheme.shapes.extraSmall)
                     .background(StatusColors.aiFill.copy(alpha = 0.5f))
                     .padding(horizontal = Spacing.s, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
             ) {
                 section.cues.forEach { cue ->
+                    // 图标和文字合成一行，不分成两列。
+                    //
+                    // 分成两列需要一个固定宽度的图标列，但 `Cue.icon` 里
+                    // 装的不是 emoji，是「停顿」「看镜头」「手势」这种两三个字的词——
+                    // 列宽一窄就被压成两行，每条提示都多出一行高度。
                     Text(
                         text = "${cue.icon} ${cue.text}",
                         fontSize = 11.sp,
+                        lineHeight = 17.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

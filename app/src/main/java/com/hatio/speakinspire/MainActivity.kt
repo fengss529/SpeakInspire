@@ -366,6 +366,10 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onAddMaterial = { tvm.addMaterial() },
                 onRemoveMaterial = { tvm.removeMaterial(it) },
                 onSettings = openSettings,
+                // 这篇文章已经有选题时，先给一页「看哪一条 / 再拆一条」。
+                // 少这一页，第二次转选题就直接落到旧骨架上，看不到角度
+                onOpenExisting = { tvm.openExisting(it) },
+                onStartNew = { tvm.startNew() },
             )
         }
 
@@ -387,6 +391,12 @@ private fun AppRoot(vm: MainViewModel = hiltViewModel()) {
                 onConvert = { route = Route.Convert(cstate.articleId) },
                 onShare = { cvm.shareArticle() },
                 onSettings = openSettings,
+                // 从思考库打开的文章，芯片和风格以前是**死的**：
+                // 上面那条 Route.Compose 传了这两个回调，这条漏了。
+                // 界面不会报错——芯片照样有涟漪，只是什么都不发生，
+                // 用户看到的就是「这些按钮点了没反应」。
+                onToggleChip = { cvm.toggleChip(it) },
+                onSelectStyle = { cvm.selectStyle(it) },
             )
         }
 

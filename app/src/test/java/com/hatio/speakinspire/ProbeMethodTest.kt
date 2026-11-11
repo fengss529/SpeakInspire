@@ -77,6 +77,63 @@ class ProbeMethodTest {
 
     // ---------- 但三种方法必须守同一条边界 ----------
 
+    /**
+     * 用户反馈：「从苏格拉底式切换到逐层逼问，感觉 AI 追问的问题没有变化」。
+     *
+     * 根因不在方法段写得不够狠，而在**它站的位置**：方法段原本排在第二段，
+     * 后面压着一百来行通用要求。模型读到最后，记住的是那些通用示范。
+     *
+     * prompt 里越靠后的指令越强，所以方法段必须排在共用要求之后。
+     * 这条测试守的就是那个位置——谁把它挪回开头，这里立刻红。
+     */
+    @Test
+    fun `方法段排在共用要求之后`() {
+        all.forEach { m ->
+            val p = Prompts.probeSystem(m)
+            val methodAt = p.indexOf(m.instruction.trim())
+            val sharedAt = p.indexOf("【先看什么】")
+            assertTrue("${m.id} 的方法段没在 prompt 里", methodAt > 0)
+            assertTrue("${m.id} 的共用段没在 prompt 里", sharedAt > 0)
+            assertTrue(
+                "${m.id}：方法段排在了共用要求前面，会被后面几十行冲掉",
+                methodAt > sharedAt,
+            )
+            // 不只「在后面」，还得靠近结尾——后面只剩禁区、输出格式、轮次
+            assertTrue(
+                "${m.id}：方法段之后还压着太多通用内容，等于又把它埋了",
+                p.length - methodAt < 1400,
+            )
+        }
+    }
+
+    /**
+     * 共用段不许带任何具体手法。
+     *
+     * 它原本给了两组示范问句（「是卡在嘴边，还是压根没想起来」）——
+     * 那是二分追问，苏格拉底式的招牌动作。共用段一旦示范，
+     * 三种方法就都照着它问，方法段写得再不同也没用。
+     */
+    @Test
+    fun `共用要求里不出现任何手法的示范`() {
+        // 方法段之前的都算共用段。它是 prompt 里唯一带【这一轮用的方法】的地方
+        fun sharedPart(m: ProbeMethod) = Prompts.probeSystem(m).substringBefore("【这一轮用的方法")
+
+        all.forEach { m ->
+            val shared = sharedPart(m)
+            assertTrue("共用段被切空了，断言会空转", shared.length > 500)
+            assertFalse(
+                "${m.id}：共用段又给了苏格拉底式的二分示范",
+                shared.contains("是卡在嘴边，还是压根没想起来"),
+            )
+            assertFalse(
+                "${m.id}：共用段用了逐层逼问的措辞，会和那种方法打架",
+                shared.contains("最经不起推敲"),
+            )
+            // 但要保留「怎么算问得贴」的判据，否则删过头会变成放羊
+            assertTrue("${m.id}：判据不能一起删掉", shared.contains("把他那句原话遮住"))
+        }
+    }
+
     @Test
     fun `每种方法都禁止给结论建议和替代方案`() {
         all.forEach { m ->

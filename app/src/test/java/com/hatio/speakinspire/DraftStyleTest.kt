@@ -229,4 +229,54 @@ class DraftStyleTest {
         assertTrue("共用段里找不到序号禁令了，断言失去对象", forbid > 0)
         assertTrue("例外必须写在禁令之后，写在前面会被后半段那句压掉", carve > forbid)
     }
+
+    // ---------- 发芽怎么进文章 ----------
+
+    /**
+     * 用户反馈：「成文应该把发芽的一些信息揉进去，让文章成体系、有逻辑、更深刻」。
+     *
+     * 原来 `draftSystem` 里**一个字都没提芽该怎么用**：芽只是作为一份素材清单
+     * 贴在对话末尾，标注规则里提了一句「用了要标 fromSprout」。
+     * 模型当然能不用就不用——用了也只是摘一句贴进去。
+     */
+    @Test
+    fun `有芽时才讲怎么用芽`() {
+        val without = Prompts.draftSystem(DraftStyle.REFLECTIVE)
+        val with = Prompts.draftSystem(DraftStyle.REFLECTIVE, withSprouts = true)
+
+        assertFalse(
+            "没有芽就不能提——模型会去找一份并不存在的材料，或者自己编几条",
+            without.contains("这是这篇能不能深下去"),
+        )
+        assertTrue("有芽时必须讲清怎么用", with.contains("这是这篇能不能深下去"))
+        assertTrue(
+            "必须说清芽是骨架而不是待引用的资料，否则它就是不用",
+            with.contains("骨架"),
+        )
+        assertTrue(
+            "必须给出「往上翻一层」的做法，只说「可以引用」等于没说",
+            with.contains("往上翻"),
+        )
+    }
+
+    @Test
+    fun `讲芽的那段不松动风格和禁区`() {
+        // 芽只是多了一段内容来源的说明，风格段和禁区必须原样生效
+        val with = Prompts.draftSystem(DraftStyle.ARGUMENT, withSprouts = true)
+        assertTrue("风格段不能被顶掉", with.contains(DraftStyle.ARGUMENT.instruction))
+        Prompts.DRAFT_FORBIDDEN.forEach { rule ->
+            assertTrue("禁区漏了：$rule", with.contains(rule.removePrefix("- ")))
+        }
+        // 芽段的标注要求也不能跟禁区打架
+        assertTrue("用了芽必须标 fromSprout", with.contains("fromSprout"))
+    }
+
+    @Test
+    fun `不许把芽里没有的结论算到芽头上`() {
+        val with = Prompts.draftSystem(DraftStyle.REFLECTIVE, withSprouts = true)
+        assertTrue(
+            "必须明写：芽撑不住的地方自己补，但不许把结论归给芽",
+            with.contains("不许把芽里没有的结论算到芽头上"),
+        )
+    }
 }

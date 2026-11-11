@@ -122,12 +122,25 @@ class ComposeViewModel @Inject constructor(
     fun loadArticle(articleId: String) {
         viewModelScope.launch {
             val view = repo.findArticle(articleId) ?: return@launch
+
+            // 出处记录**已经不在了**就把 noteId 留空，界面据此关掉「回去再聊」。
+            //
+            // 不能直接写 `sourceNoteId.orEmpty()`：那是普通列，记录被删之后
+            // 它还是非空的，于是按钮亮着，点进去是一条空白的追问页。
+            val sourceNoteId = if (view.hasSource) view.article.sourceNoteId.orEmpty() else ""
+
+            // 素材芯片要显示「这篇当时掌握多少」，所以得把出处记录读回来。
+            //
+            // 以前这里压根没读：roundCount / sproutCount 都是默认的 0，
+            // 芯片要么不出现、要么写着「追问 0 轮」，
+            // 用户点它也没反应（上层还漏传了回调）。三件事叠在一起，
+            // 看起来就是「这里有一排装饰」。
+            val note = sourceNoteId.takeIf { it.isNotBlank() }?.let { repo.findNote(it) }
+            val rounds = note?.deepening?.rounds.orEmpty()
+            val sprouts = note?.sprouts.orEmpty()
+
             _state.value = ComposeUiState(
-                // 出处记录**已经不在了**就把 noteId 留空，界面据此关掉「回去再聊」。
-                //
-                // 不能直接写 `sourceNoteId.orEmpty()`：那是普通列，记录被删之后
-                // 它还是非空的，于是按钮亮着，点进去是一条空白的追问页。
-                noteId = if (view.hasSource) view.article.sourceNoteId.orEmpty() else "",
+                noteId = sourceNoteId,
                 articleId = view.article.id,
                 title = view.article.title,
                 paragraphs = view.article.paragraphs,
@@ -139,6 +152,12 @@ class ComposeViewModel @Inject constructor(
                 composedStyle = DraftStyle.byIdOrNull(view.article.styleId),
                 styleRecorded = view.article.styleId.isNotBlank(),
                 styleInstruction = styleStore.noteOf(),
+                roundCount = rounds.count { it.answered },
+                sproutCount = sprouts.size,
+                sproutTitles = sprouts.map { it.title },
+                // 没有的素材不能勾：勾了却什么都不变，会让人以为功能坏了
+                includeDialogue = rounds.any { it.answered },
+                includeSprouts = sprouts.isNotEmpty(),
             )
         }
     }
@@ -194,6 +213,14 @@ class ComposeViewModel @Inject constructor(
                             // 刚写出来的这篇，风格是确定的
                             styleRecorded = true,
                             composedStyle = current.style,
+                            // **重写完就不再是「库里那一篇」了，得走出保存这一步。**
+                            //
+                            // 界面拿这个标记决定底部摆什么：true → 「转选题 / 回去再聊」，
+                            // false → 「存进思考库」。从思考库打开的文章重写之后，
+                            // 如果还留着 true，那就没有保存入口——
+                            // 新正文只在内存里，用户退出就没了，而库里还是旧的。
+                            // 保存时 articleId 不变，是覆盖同一篇，不会多出一篇。
+                            alreadyComposed = false,
                         )
                     }
 

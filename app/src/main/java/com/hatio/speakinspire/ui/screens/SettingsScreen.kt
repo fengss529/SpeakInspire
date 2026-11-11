@@ -347,7 +347,18 @@ fun SettingsScreen(
                         ProbeMethodRow(
                             method = method,
                             selected = state.probeMethod == method,
-                            onClick = { onSelectProbeMethod(method) },
+                            onClick = {
+                                onSelectProbeMethod(method)
+                                // 这个动作没有「保存」按钮，也没有别的可见结果——
+                                // 只有圆点挪了位置。用户会怀疑「是不是还要点保存」。
+                                // 一句回执把这个疑问当场消掉，顺便说清它从哪一句开始生效：
+                                // **已经在等回答的那一个问题不会变**，那是同一场对话的一部分。
+                                scope.launch {
+                                    snackbar.showSnackbar(
+                                        "下一条问题起，按「${method.shortLabel}」问"
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -396,11 +407,16 @@ fun SettingsScreen(
             // ---------- 4. 数据 ----------
             //
             // 它是「我把东西存在这儿，安全吗」的答案，
-            // 而不是一个功能入口，所以放在最后一组
+            // 而不是一个功能入口，所以放在最后一组。
+            //
+            // 但这一组**没有二级页**：它上面那行「你的数据」是个分组标签，
+            // 点不动；能点的是下面两行。用户反馈「这个按钮是干啥的，
+            // 没发现用处」——他点的是标签，看到没反应就以为坏了。
+            // 副标题现在直接说明「能点的是下面两行」。
             SettingsSection(
                 icon = Icons.Outlined.FileDownload,
                 title = "你的数据",
-                subtitle = "所有记录只存在这台手机上，不上传任何服务器。",
+                subtitle = "能点的是下面两行。所有内容只存在这台手机上，不上传任何服务器。",
             ) {
                 ActionRow(
                     icon = Icons.Outlined.FileDownload,
@@ -705,7 +721,10 @@ private fun ActionRow(
         Icon(
             imageVector = Icons.Outlined.ChevronRight,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+            // 箭头用主色而不是灰色：这一组里「能点的是哪些」全靠它指出来。
+            // 之前是 50% 灰，远看和分组标题的小图标分不出来，
+            // 于是整张卡被当成一个可以点进去的东西
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
             modifier = Modifier.size(20.dp),
         )
     }
