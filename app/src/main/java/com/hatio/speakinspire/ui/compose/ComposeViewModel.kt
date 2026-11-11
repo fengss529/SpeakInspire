@@ -370,6 +370,8 @@ class ComposeViewModel @Inject constructor(
             com.hatio.speakinspire.data.model.ErrorKindLite.NETWORK -> ErrorKind.NETWORK_UNAVAILABLE
             com.hatio.speakinspire.data.model.ErrorKindLite.UNAUTHORIZED -> ErrorKind.INVALID_API_KEY
             com.hatio.speakinspire.data.model.ErrorKindLite.RATE_LIMITED -> ErrorKind.RATE_LIMITED
+            com.hatio.speakinspire.data.model.ErrorKindLite.THINKING_ONLY -> ErrorKind.THINKING_ONLY
+            com.hatio.speakinspire.data.model.ErrorKindLite.NO_CONTENT -> ErrorKind.NO_CONTENT
             com.hatio.speakinspire.data.model.ErrorKindLite.UNKNOWN -> ErrorKind.UNKNOWN
         }
 }

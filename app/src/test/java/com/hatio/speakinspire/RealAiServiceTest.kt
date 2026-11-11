@@ -35,6 +35,15 @@ import org.junit.Test
 class FakeTransport : HttpTransport {
     var sseLines: List<String> = emptyList()
     var postResponse: String = ""
+    /**
+     * 按顺序返回的响应队列，优先于 [postResponse]。
+     *
+     * 重试类的行为测不了「一次调用」——必须能给出
+     * 「第一次空、第二次正常」这样的序列。
+     */
+    val postQueue: MutableList<String> = mutableListOf()
+    /** 发过几次 post。重试是否真的发生，只能数这个 */
+    var postCount: Int = 0
     var pingResponse: String = """{"choices":[{"message":{"content":"hi"}}]}"""
 
     var lastBody: String = ""
@@ -52,8 +61,9 @@ class FakeTransport : HttpTransport {
 
     override suspend fun post(baseUrl: String, apiKey: String, body: String): String {
         lastUrl = baseUrl; lastKey = apiKey; lastBody = body
+        postCount++
         throwOnPost?.let { throw it }
-        return postResponse
+        return if (postQueue.isNotEmpty()) postQueue.removeAt(0) else postResponse
     }
 
     override suspend fun ping(baseUrl: String, apiKey: String, model: String): String {
@@ -510,6 +520,45 @@ class RealAiServiceTest {
         assertEquals(2, s.paragraphs.size)
         assertTrue(s.paragraphs[0].isMine)
         assertFalse(s.paragraphs[1].isMine)
+    }
+
+    @Test
+    fun `成文第一次返回空正文时自动重试一次`() = runBlocking {
+        val t = FakeTransport()
+        // 第一次：200，但正文是空的——实测里「没写成」那一刻就是这个样子
+        t.postQueue +=
+            """{"choices":[{"index":0,"message":{"content":""},"finish_reason":"stop"}]}"""
+        t.postQueue +=
+            """{"choices":[{"message":{"content":"{\"title\":\"T\",\"paragraphs\":[{\"text\":\"x\",\"isMine\":true}]}"}}]}"""
+        val r = service(t).composeArticle(ctx(listOf(enough(), ChatMessage.ai("问"))))
+        assertTrue("空正文是瞬时的，重试一次就该成功", r is ComposeResult.Success)
+        assertEquals("必须真的重发了一次", 2, t.postCount)
+    }
+
+    @Test
+    fun `两次都空正文时不再重试，直接告诉用户原因`() = runBlocking {
+        val t = FakeTransport()
+        repeat(5) {
+            t.postQueue +=
+                """{"choices":[{"index":0,"message":{"content":""},"finish_reason":"stop"}]}"""
+        }
+        val r = service(t).composeArticle(ctx(listOf(enough(), ChatMessage.ai("问"))))
+        assertTrue(r is ComposeResult.Failed)
+        assertEquals("只重试一次，不能无限重发", 2, t.postCount)
+        val detail = (r as ComposeResult.Failed).detail.orEmpty()
+        assertTrue("要说清是空正文，而不是一句「出了点问题」", detail.contains("空正文"))
+        assertTrue("finish_reason 是唯一线索，要带上", detail.contains("stop"))
+    }
+
+    @Test
+    fun `只回来思考过程时归类为思考模式问题`() = runBlocking {
+        val t = FakeTransport()
+        t.postResponse =
+            """{"choices":[{"index":0,"message":{"content":null,"reasoning_content":"想了很久"},"finish_reason":"stop"}]}"""
+        val r = service(t).composeArticle(ctx(listOf(enough(), ChatMessage.ai("问"))))
+        assertTrue(r is ComposeResult.Failed)
+        // 只回了思考 → 换服务商能解决，和「空正文」不是一回事
+        assertEquals(ErrorKindLite.THINKING_ONLY, (r as ComposeResult.Failed).kind)
     }
 
     @Test

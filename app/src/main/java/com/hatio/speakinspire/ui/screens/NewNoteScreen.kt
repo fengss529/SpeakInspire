@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -128,6 +129,15 @@ fun NewNoteScreen(
                 },
             )
 
+            // 标题与正文之间要有一条线。
+            //
+            // 原来只隔一个间距：标题 17sp、正文 15sp，颜色都是 onSurface，
+            // 一旦标题写成两行、或者正文开头那句也短，两段就糊在一起，
+            // 看不出哪部分是标题。线比加大字号有效——字号再大也还是同一片字。
+            Spacer(Modifier.height(Spacing.s))
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+            )
             Spacer(Modifier.height(Spacing.m))
 
             BasicTextField(

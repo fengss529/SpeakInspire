@@ -300,4 +300,76 @@ object ResponseParser {
         if (trimmed.endsWith("/chat/completions")) return trimmed
         return trimmed + path
     }
+
+    /** 抽 finish_reason。缺字段与字面量 null 都算「没有」 */
+    fun finishReason(body: String): String? =
+        extractRawValue(body, "\"finish_reason\":")
+            ?.let { unquoteIfNeeded(it) }
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && it != "null" }
+
+    /**
+     * 成文拿到 200 却没有正文时，判断到底是哪一种。
+     *
+     * ## 为什么要分
+     *
+     * 2026-11-11 真机：追问 5 轮后点成文，界面只显示
+     * 「响应里没有 content 字段」加一段原始 JSON。那段 JSON 在界面上
+     * 被截成两行，既不像人话，也指不出下一步该做什么。
+     *
+     * 而这几种情况，用户要做的事完全不同：
+     *
+     * | 情况 | 该做什么 |
+     * |---|---|
+     * | 只回了思考 | 换服务商——自定义服务商可能不认关闭思考的参数 |
+     * | 输出到上限被截断 | 直接再点一次，或换成短一点的风格 |
+     * | 服务端给了空结果 | 再点一次，多半是瞬时问题 |
+     * | 被安全策略拦下 | 换个说法 |
+     *
+     * 一句话概括四种失败，等于没有说明。
+     */
+    fun whyNoContent(body: String): NoContentReason {
+        val finish = finishReason(body)
+        val content = extractRawValue(body, "\"content\":")?.let { unquoteIfNeeded(it) }
+        val reasoning = extractRawValue(body, "\"reasoning_content\":")
+            ?.let { unquoteIfNeeded(it) }
+            ?.trim()
+            .orEmpty()
+
+        return when {
+            // 连 choices 都没有，说明这根本不是一条补全响应——
+            // 可能是网关的错误页、或者服务商换了个外壳。
+            // 这种情况只剩原始响应能说明问题。
+            !body.contains("\"choices\"") -> NoContentReason.UNDETERMINED
+            finish == "content_filter" -> NoContentReason.FILTERED
+            finish == "length" -> NoContentReason.TRUNCATED
+            reasoning.isNotEmpty() && content.isNullOrBlank() -> NoContentReason.THINKING_ONLY
+            content.isNullOrBlank() -> NoContentReason.EMPTY
+            // 走到这里说明正文其实是有的——调用方只在「没有正文」时才问，
+            // 两者对不上就别猜，把原文交出去。
+            else -> NoContentReason.UNDETERMINED
+        }
+    }
+}
+
+/**
+ * 成文拿到 200 但正文为空的原因。
+ *
+ * 这是「为什么没有正文」，不是「错误的种类」——用户看到的文案由它决定。
+ */
+enum class NoContentReason {
+    /** 只有 reasoning_content，没有 content */
+    THINKING_ONLY,
+
+    /** finish_reason = length，写到一半被截断 */
+    TRUNCATED,
+
+    /** finish_reason = content_filter */
+    FILTERED,
+
+    /** 是补全响应，但 content 为空 */
+    EMPTY,
+
+    /** 响应里根本没有 choices——只能把原始响应抛给用户看 */
+    UNDETERMINED,
 }

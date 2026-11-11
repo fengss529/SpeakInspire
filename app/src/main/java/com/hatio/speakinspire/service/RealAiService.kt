@@ -22,6 +22,7 @@ import com.hatio.speakinspire.data.model.SproutSection
 import com.hatio.speakinspire.domain.MaterialKit
 import com.hatio.speakinspire.data.remote.ErrorMapper
 import com.hatio.speakinspire.data.remote.HttpTransport
+import com.hatio.speakinspire.data.remote.NoContentReason
 import com.hatio.speakinspire.data.remote.RequestBuilder
 import com.hatio.speakinspire.data.remote.ResponseParser
 import com.hatio.speakinspire.data.remote.SseParser
@@ -216,22 +217,32 @@ class RealAiService(
         }
 
         return try {
-            val body = RequestBuilder.compose(
-                cfg,
-                // 风格段可换，禁区不可换——结构在 Prompts.draftSystem 里保证，
-                // 这里只负责把用户的两种输入（选了哪种风格、补充要求）传进去
-                Prompts.draftSystem(context.style, context.styleInstruction),
-                composeMessages(context),
-            )
-            val raw = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
-            val content = ResponseParser.extractContent(raw)
-            // 服务商回了 200，但里面没有 content。
-            // 这时候 raw 是唯一的线索——必须带出去，
-            // 否则「没写成」三个字后面什么依据都没有。
-                ?: return ComposeResult.Failed(
-                    ErrorKindLite.UNKNOWN,
-                    detail = "响应里没有 content 字段：${raw.take(300)}",
+            val system = Prompts.draftSystem(context.style, context.styleInstruction)
+            val messages = composeMessages(context)
+            val body = RequestBuilder.compose(cfg, system, messages)
+            val raw0 = transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, body)
+            // 200 但没有可用的正文。实测（2026-11-11，deepseek-flash + 口播稿 +
+            // 追问 5 轮）：content 里是一串纯空白，finish_reason 却是 stop。
+            //
+            // 这种响应**原样重发没有意义**——同一条请求大概率还是同一串空白。
+            // 所以重发时在末尾加一句纠偏的话：既换了采样，也把要求说死。
+            // 这一步不重试的话，用户只能自己再点一次「再试一次」，
+            // 而他并不知道那是有用的，只会觉得这个功能坏了。
+            val raw = if (ResponseParser.extractContent(raw0) != null) {
+                raw0
+            } else {
+                val retryBody = RequestBuilder.compose(
+                    cfg,
+                    system,
+                    messages + ChatMessage.user(
+                        "上一次你什么都没写，只回了一串空白字符。" +
+                            "请直接输出 JSON：先给 title，再给 paragraphs，不要输出空白。",
+                    ),
                 )
+                transport.post(ResponseParser.endpoint(cfg.baseUrl), cfg.apiKey, retryBody)
+            }
+            val content = ResponseParser.extractContent(raw)
+                ?: return failedByNoContent(raw)
 
             parseCompose(content, context.materialSize)
         } catch (e: TransportException) {
@@ -244,8 +255,41 @@ class RealAiService(
         }
     }
 
-    /** 拆角度：只要标题+理由，不要骨架（决策 Q3） */
-    override suspend fun deriveAngles(article: ArticleDraft): List<Angle> {
+    /**
+     * 成文没有正文时的失败归类。
+     *
+     * 原始响应只留在「实在判断不出来」那一支——其余四种都能说清
+     * 用户该做什么，再糊一段 JSON 上去只会把话盖住。
+     */
+    private fun failedByNoContent(raw: String): ComposeResult.Failed {
+        val finish = ResponseParser.finishReason(raw)
+        return when (ResponseParser.whyNoContent(raw)) {
+            NoContentReason.THINKING_ONLY ->
+                ComposeResult.Failed(ErrorKindLite.THINKING_ONLY)
+
+            NoContentReason.TRUNCATED -> ComposeResult.Failed(
+                ErrorKindLite.NO_CONTENT,
+                detail = "输出长度到了上限，文章写到一半停了。再点一次通常会写完。",
+            )
+
+            NoContentReason.FILTERED -> ComposeResult.Failed(
+                ErrorKindLite.UNKNOWN,
+                detail = "内容被服务端的安全策略拦下了，换个说法再试。",
+            )
+
+            NoContentReason.EMPTY -> ComposeResult.Failed(
+                ErrorKindLite.NO_CONTENT,
+                detail = "服务商返回了空正文，但没报错（finish_reason=${finish ?: "没有这个字段"}）。",
+            )
+
+            NoContentReason.UNDETERMINED -> ComposeResult.Failed(
+                ErrorKindLite.UNKNOWN,
+                detail = "响应里没有 content 字段：${raw.take(300)}",
+            )
+        }
+    }
+
+    /** 拆角度：只要标题+理由，不要骨架（决策 Q3） */    override suspend fun deriveAngles(article: ArticleDraft): List<Angle> {
         val cfg = configProvider()
         return try {
             val body = RequestBuilder.angles(

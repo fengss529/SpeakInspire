@@ -56,7 +56,25 @@ sealed interface ComposeResult {
     ) : ComposeResult
 }
 
-enum class ErrorKindLite { NETWORK, UNAUTHORIZED, RATE_LIMITED, UNKNOWN }
+enum class ErrorKindLite {
+    NETWORK,
+    UNAUTHORIZED,
+    RATE_LIMITED,
+
+    /**
+     * 只回来了思考过程，正文是空的。
+     *
+     * 和 [NO_CONTENT] 分开：这个的成因几乎总是「思考模式没关掉」，
+     * 换服务商能解决；而空结果多半再点一次就好。两句话说成一句，
+     * 用户就不知道该改设置还是该重试。
+     */
+    THINKING_ONLY,
+
+    /** 200，但正文是空的或没有正文 */
+    NO_CONTENT,
+
+    UNKNOWN,
+}
 
 data class DraftParagraph(
     val text: String,
